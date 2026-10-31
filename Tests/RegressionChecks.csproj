@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType><TargetFramework>net9.0</TargetFramework>
+    <Nullable>enable</Nullable><ImplicitUsings>enable</ImplicitUsings>
+    <NoWarn>CS0649</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="Mono.Cecil"><HintPath>..\..\..\BepInEx\core\Mono.Cecil.dll</HintPath></Reference>
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+    <Compile Include="..\StageArtIdentity.cs" Link="Production\StageArtIdentity.cs" />
+    <Compile Include="..\Definitions.cs" Link="Production\Definitions.cs" />
+    <Compile Include="..\GrowthSeasons.cs" Link="Production\GrowthSeasons.cs" />
+    <Compile Include="..\GrowthProgress.cs" Link="Production\GrowthProgress.cs" />
+    <Compile Include="..\StagePreviewState.cs" Link="Production\StagePreviewState.cs" />
+    <Compile Include="..\CustomGrowable.cs" Link="Production\CustomGrowable.cs" />
+    <Compile Include="..\ItemComponent_CustomGrowableSeed.cs" Link="Production\ItemComponent_CustomGrowableSeed.cs" />
+    <Compile Include="..\EditorValidation.cs" Link="Production\EditorValidation.cs" />
+    <Compile Include="..\EditorTextLayout.cs" Link="Production\EditorTextLayout.cs" />
+    <Compile Include="..\SeedCompatibility.cs" Link="Production\SeedCompatibility.cs" />
+    <Compile Include="..\StageCacheMigration.cs" Link="Production\StageCacheMigration.cs" />
+    <Compile Include="..\..\CustomItemLoader\GlbCacheApi.cs" Link="Production\GlbCacheApi.cs" />
+    <Compile Include="..\..\ModdingTools\SharedArtLibrary.cs" Link="Framework\SharedArtLibrary.cs" />
+    <Compile Include="..\..\ModdingTools\SharedArtFiles.cs" Link="Framework\SharedArtFiles.cs" />
+    <Compile Include="..\..\ModdingTools\SharedArtApi.cs" Link="Framework\SharedArtApi.cs" />
+  </ItemGroup>
+</Project>

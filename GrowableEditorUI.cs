@@ -17,7 +17,7 @@ namespace SilverpineMods.CustomGrowables;
 /// ownership to Custom Item Loader. It reads and writes only the add-on-owned
 /// growable extension through CustomItemApi.
 /// </summary>
-internal sealed class GrowableEditorUI : ModToolBehaviour
+internal sealed partial class GrowableEditorUI : ModToolBehaviour
 {
     private const float DesignWidth = 1920f;
     private const float DesignHeight = 1080f;
@@ -32,9 +32,13 @@ internal sealed class GrowableEditorUI : ModToolBehaviour
     private static GrowableEditorUI? instance;
 
     private readonly List<CustomItemInfo> items = new();
+    private readonly Dictionary<string, string> seedConflicts = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> growableIds =
         new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, string> numberText = new();
+    private readonly HashSet<string> invalidNumbers = new();
+    private string? loadedExtensionJson;
+    private string loadError = "";
     private readonly List<PickerOption> pickerOptions = new();
     private CustomItemInfo? selectedItem;
     private GrowableDefinition? definition;
@@ -54,6 +58,10 @@ internal sealed class GrowableEditorUI : ModToolBehaviour
     private bool filePickerOpen;
     private bool pickerOpen;
     private bool renderingGlbPreview;
+    private PickerOption[]? filteredPickerOptions;
+    private string? filteredPickerSearch;
+    private int pickerPage;
+    private const int PickerPageSize = 64;
     private int glbPreviewStage = -1;
     private Sprite? glbPreview;
     private Sprite? grassTerrainSprite;
@@ -79,6 +87,7 @@ internal sealed class GrowableEditorUI : ModToolBehaviour
         }
 
         instance.AttachSession(session);
+        session.EscapeHandler = instance.HandleEscape;
         instance.open = true;
         instance.grassTerrainSprite = null;
         instance.grassTerrainLookupAttempted = false;
@@ -92,28 +101,30 @@ internal sealed class GrowableEditorUI : ModToolBehaviour
              !GenericListUI.Instance.gameObject.activeInHierarchy))
             filePickerOpen = false;
 
-        if (open && !filePickerOpen && Input.GetKeyDown(KeyCode.Escape))
-        {
-            if (pickerOpen)
-                ClosePicker();
-            else
-                Close();
-        }
+        if (open && Input.GetKeyDown(KeyCode.Escape)) HandleEscape();
     }
 
     private void OnGUI()
     {
         if (!open || filePickerOpen)
             return;
+        using ModGuiScope scope = ModGui.BeginScaled(DesignWidth, DesignHeight);
+        GUISkin previousSkin = GUI.skin;
+        EnsureEditorSkin();
+        GUI.skin = editorSkin!;
+        try { DrawEditorShell(); DrawEditorTooltip(); }
+        finally { GUI.skin = previousSkin; }
+    }
 
+    private void DrawEditorShell()
+    {
         GUI.enabled = true;
         GUI.color = Color.white;
         GUI.backgroundColor = Color.white;
         GUI.depth = -1000;
 
-        using ModGuiScope scope = ModGui.BeginScaled(DesignWidth, DesignHeight);
         Color old = GUI.color;
-        GUI.color = new Color(0.045f, 0.075f, 0.055f, 0.99f);
+        GUI.color = new Color(0.045f, 0.065f, 0.075f, 0.99f);
         GUI.DrawTexture(
             new Rect(0, 0, DesignWidth, DesignHeight),
             Texture2D.whiteTexture);
@@ -121,6 +132,8 @@ internal sealed class GrowableEditorUI : ModToolBehaviour
 
         GUILayout.BeginArea(
             new Rect(12, 10, DesignWidth - 24, DesignHeight - 20));
+        if (closeConfirmation) { DrawCloseConfirmation(); GUILayout.EndArea(); return; }
+        if (libraryOpen) { DrawArtLibrary(); GUILayout.EndArea(); return; }
         if (pickerOpen)
         {
             DrawPickerScreen();
@@ -131,6 +144,7 @@ internal sealed class GrowableEditorUI : ModToolBehaviour
         GUILayout.BeginHorizontal();
         DrawItemPanel();
         DrawDetailsPanel();
+        DrawPersistentPreview();
         GUILayout.EndHorizontal();
         if (!string.IsNullOrWhiteSpace(status))
             GUILayout.Label(status, GUI.skin.box);
@@ -140,70 +154,70 @@ internal sealed class GrowableEditorUI : ModToolBehaviour
     private void DrawHeader()
     {
         GUILayout.BeginHorizontal(GUI.skin.box);
-        GUILayout.Label("Growables Editor", GUILayout.Width(220));
-        GUILayout.Label(selectedItem == null
+        GUILayout.Label("Growables Editor", editorFieldLabel!, GUILayout.Width(220));
+        DrawSingleLineLabel(selectedItem == null
             ? "Choose an item registered by Custom Item Loader."
             : selectedItem.QualifiedId + (dirty ? "  • unsaved" : ""));
 
         GUI.enabled = !dirty;
-        if (GUILayout.Button("Refresh CIL", GUILayout.Width(110)))
-            RefreshItems();
+        if (DrawActionButton("Refresh CIL", 110))
+        { RefreshItems(); GUIUtility.ExitGUI(); }
         GUI.enabled = selectedItem != null && dirty;
-        if (GUILayout.Button("Discard", GUILayout.Width(90)))
-            LoadSelected();
+        if (DrawActionButton("Discard", 90))
+        { LoadSelected(); GUIUtility.ExitGUI(); }
         GUI.enabled = selectedItem != null && dirty &&
-            !(definition != null && SelectedItemInheritsNativeSeeds());
-        if (GUILayout.Button("Save Pack", GUILayout.Width(110)))
+            !(definition != null && SelectedItemHasUseConflict());
+        if (DrawActionButton("Save Pack", 110))
             SaveSelected();
         GUI.enabled = true;
-        if (GUILayout.Button("Close", GUILayout.Width(90)))
-            Close();
+        if (DrawActionButton("Close", 90))
+        { RequestClose(); GUIUtility.ExitGUI(); }
         GUILayout.EndHorizontal();
     }
 
     private void DrawItemPanel()
     {
-        GUILayout.BeginVertical(GUI.skin.box, GUILayout.Width(445));
-        GUILayout.Label("Custom Item Loader items");
-        GUILayout.Label(
-            "Create the seed/inventory item in Custom Item Editor, then " +
-            "attach its plant behavior here.",
-            GUI.skin.box);
+        GUILayout.BeginVertical(GUI.skin.box, GUILayout.Width(SidebarWidth));
+        GUILayout.Label("CURRENT PACK", editorMuted!);
+        if (DrawSingleLineChoice((string.IsNullOrEmpty(packFilter) ? "All packs" : packFilter) + "  ▼"))
+            OpenPackPicker();
+        GUILayout.Label("Create seeds in Item Loader.", editorMuted!);
+        GUILayout.Space(8);
+        GUILayout.Label("Search items", editorFieldLabel!);
         GUILayout.BeginHorizontal();
-        GUILayout.Label("Search", GUILayout.Width(62));
-        search = GUILayout.TextField(search ?? "");
-        if (GUILayout.Button("×", GUILayout.Width(32)))
+        search = GUILayout.TextField(search ?? "", GUILayout.MinHeight(44));
+        if (DrawActionButton("×", 32))
             search = "";
         GUILayout.EndHorizontal();
 
         itemScroll = GUILayout.BeginScrollView(itemScroll);
         foreach (CustomItemInfo item in items)
         {
-            if (!MatchesSearch(item))
+            if (!MatchesSearch(item) || (!string.IsNullOrEmpty(packFilter) && item.PackId != packFilter))
                 continue;
             bool selected = ReferenceEquals(selectedItem, item) ||
                 selectedItem?.QualifiedId.Equals(
                     item.QualifiedId,
                     StringComparison.OrdinalIgnoreCase) == true;
             string marker = growableIds.Contains(item.QualifiedId) ? "● " : "○ ";
-            string inheritedSeed = InheritsNativeSeeds(item)
-                ? "  [native seed behavior]"
-                : "";
-            string label = marker + item.DisplayName + inheritedSeed +
-                "\n" + item.QualifiedId;
+            string inheritedSeed = seedConflicts.TryGetValue(item.QualifiedId, out string conflict)
+                ? "! " : "";
+            string title = marker + inheritedSeed + item.DisplayName;
+            string tooltip = item.DisplayName + "\n" + item.QualifiedId +
+                (conflict == null ? "" : "\n" + SeedCompatibility.Explain(conflict));
             Color old = GUI.backgroundColor;
             if (selected)
                 GUI.backgroundColor = new Color(0.48f, 0.75f, 0.46f);
             GUI.enabled = !dirty || selected;
-            if (GUILayout.Button(label, GUILayout.MinHeight(52)))
-                SelectItem(item);
+            if (DrawItemCard(title, item.QualifiedId, tooltip))
+            { SelectItem(item); GUIUtility.ExitGUI(); }
             GUI.enabled = true;
             GUI.backgroundColor = old;
         }
         if (items.Count == 0)
             GUILayout.Label("No registered Custom Item Loader items were found.");
         GUILayout.EndScrollView();
-        GUILayout.Label("● has growable data   ○ item only");
+        GUILayout.Label("● Growable   ○ Item   ! Conflict", editorMuted!);
         GUILayout.EndVertical();
     }
 
@@ -219,18 +233,24 @@ internal sealed class GrowableEditorUI : ModToolBehaviour
             return;
         }
 
+        if (!string.IsNullOrEmpty(loadError))
+        {
+            GUILayout.Label(loadError, GUI.skin.box);
+            GUILayout.Label("The saved data is untouched. Repair the JSON, then reload, or select another item.");
+            if (GUILayout.Button("Reload growable data")) { LoadSelected(); GUIUtility.ExitGUI(); }
+            GUILayout.EndVertical();
+            return;
+        }
         if (definition == null)
         {
-            bool incompatible = SelectedItemInheritsNativeSeeds();
+            bool incompatible = SelectedItemHasUseConflict();
             GUILayout.FlexibleSpace();
             GUILayout.Label(
                 selectedItem.DisplayName + " does not have growable behavior.");
             if (incompatible)
             {
                 GUILayout.Label(
-                    "Growable behavior cannot be attached because this item " +
-                    "inherits Silverpine's native ItemComponent_Seeds. " +
-                    "Choose a component-free clone or custom artwork.",
+                    SeedCompatibility.Explain(seedConflicts[selectedItem.QualifiedId]),
                     GUI.skin.box);
             }
             else
@@ -239,8 +259,8 @@ internal sealed class GrowableEditorUI : ModToolBehaviour
                     "The item itself remains fully owned by Custom Item Loader.");
             }
             GUI.enabled = !incompatible;
-            if (GUILayout.Button("Add Growable Behavior", GUILayout.Height(42)))
-                AddDefinition();
+            if (GUILayout.Button("Add Growable Behavior", GUILayout.MinHeight(44)))
+            { AddDefinition(); GUIUtility.ExitGUI(); }
             GUI.enabled = true;
             GUILayout.FlexibleSpace();
             GUILayout.EndVertical();
@@ -248,23 +268,37 @@ internal sealed class GrowableEditorUI : ModToolBehaviour
         }
 
         detailsScroll = GUILayout.BeginScrollView(detailsScroll);
-        if (SelectedItemInheritsNativeSeeds())
+        if (SelectedItemHasUseConflict())
             GUILayout.Label(
-                "This growable cannot be saved because the item inherits " +
-                "Silverpine's native seed behavior. Remove Growable Behavior " +
-                "below, or recreate the item with a component-free clone.",
+                SeedCompatibility.Explain(seedConflicts[selectedItem.QualifiedId]) +
+                " You can still remove Growable Behavior below.",
                 GUI.skin.box);
-        DrawLifecycle();
-        DrawPlantingRules();
-        DrawStages();
-        DrawHarvest();
+        int nextTab = GUILayout.Toolbar(editorTab, new[] { "Lifecycle", "Stages & Art", "Harvest", "Planting" }, editorAction!, GUILayout.MinHeight(44));
+        if (nextTab != editorTab) { CancelOffsetDrag(); editorTab = nextTab; }
         GUILayout.Space(12);
-        if (GUILayout.Button("Remove Growable Behavior", GUILayout.Height(36)))
+        switch (editorTab)
         {
-            definition = null;
-            dirty = true;
-            numberText.Clear();
-            status = "Growable behavior will be removed when the pack is saved.";
+            case 0: DrawLifecycle(); break;
+            case 1: DrawStages(); break;
+            case 2: DrawHarvest(); break;
+            case 3: DrawPlantingRules(); break;
+        }
+        GUILayout.Space(12);
+        if (GUILayout.Button("Remove Growable Behavior", GUILayout.MinHeight(44)))
+            removeConfirmation = true;
+        if (removeConfirmation)
+        {
+            GUILayout.Label("Remove this item's growable behavior when you save?");
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button("Remove"))
+            {
+                CancelOffsetDrag(); ClearGlbPreview(); definition = null; MarkDirty();
+                ClearNumberInputs(); removeConfirmation = false;
+                status = "Growable behavior will be removed when the pack is saved.";
+                GUIUtility.ExitGUI();
+            }
+            if (GUILayout.Button("Cancel")) removeConfirmation = false;
+            GUILayout.EndHorizontal();
         }
         GUILayout.EndScrollView();
         GUILayout.EndVertical();
@@ -360,10 +394,7 @@ internal sealed class GrowableEditorUI : ModToolBehaviour
             "Allow beneath roofs",
             definition.allowRoofed,
             value => Set(ref definition.allowRoofed, value));
-        DrawToggle(
-            "Grow during winter",
-            definition.growsInWinter,
-            value => Set(ref definition.growsInWinter, value));
+        DrawGrowthSeasons();
         DrawToggle(
             "Blocks movement",
             definition.blocksMovement,
@@ -375,6 +406,45 @@ internal sealed class GrowableEditorUI : ModToolBehaviour
         GUILayout.EndVertical();
     }
 
+    private void DrawGrowthSeasons()
+    {
+        GUILayout.Label("Growth seasons");
+        int mask;
+        try { mask = GrowthSeasons.Resolve(definition!.growthSeasons, definition.growsInWinter, allowEmpty: true); }
+        catch (InvalidDataException error)
+        {
+            GUILayout.Label(error.Message);
+            if (GUILayout.Button("Reset to all seasons"))
+            {
+                definition!.growthSeasons = GrowthSeasons.NamesFor(GrowthSeasons.All);
+                definition.growsInWinter = true;
+                MarkDirty();
+            }
+            return;
+        }
+        int original = mask;
+        for (int row = 0; row < 2; row++)
+        {
+            GUILayout.BeginHorizontal();
+            for (int i = row * 2; i < row * 2 + 2; i++)
+            {
+                bool selected = GUILayout.Toggle(GrowthSeasons.Allows(mask, i), GrowthSeasons.Names[i], GUI.skin.button);
+                mask = selected ? mask | (1 << i) : mask & ~(1 << i);
+            }
+            GUILayout.EndHorizontal();
+        }
+        if (GUILayout.Button("All seasons")) mask = GrowthSeasons.All;
+        if (mask != original)
+        {
+            definition!.growthSeasons = GrowthSeasons.NamesFor(mask);
+            definition.growsInWinter = GrowthSeasons.Allows(mask, 3);
+            MarkDirty();
+        }
+        if (mask == 0) GUILayout.Label("Choose at least one season before saving.");
+        GUILayout.Label("Growth and regrowth pause outside these seasons without losing progress. " +
+            "Planting and harvesting ripe plants are still allowed. Uses the local biome's season.", editorMuted!);
+    }
+
     private void DrawStages()
     {
         definition!.stages ??= new List<GrowableStageDefinition>();
@@ -384,12 +454,11 @@ internal sealed class GrowableEditorUI : ModToolBehaviour
             "The final stage is harvest-ready. Duration belongs to the " +
             "stage it is shown on and controls advancement to the next one.");
 
-        for (int index = 0; index < definition.stages.Count; index++)
-            if (DrawStage(index))
-                break;
+        DrawSelectedStageChoice();
+        if (definition.stages.Count > 0) DrawStage(selectedStage);
 
         if (GUILayout.Button("Add Stage"))
-            AddStage();
+        { AddStage(); GUIUtility.ExitGUI(); }
         GUILayout.EndVertical();
     }
 
@@ -405,19 +474,19 @@ internal sealed class GrowableEditorUI : ModToolBehaviour
             ? $"Stage {index}: harvest-ready"
             : $"Stage {index}");
         GUI.enabled = index > 0;
-        if (GUILayout.Button("↑", GUILayout.Width(36)))
+        if (DrawActionButton("↑", 36))
             action = -1;
         GUI.enabled = index < definition.stages.Count - 1;
-        if (GUILayout.Button("↓", GUILayout.Width(36)))
+        if (DrawActionButton("↓", 36))
             action = 1;
         GUI.enabled = definition.stages.Count > 2;
-        if (GUILayout.Button("Remove", GUILayout.Width(78)))
+        if (DrawActionButton("Remove", 78))
             action = 2;
         GUI.enabled = true;
         GUILayout.EndHorizontal();
 
-        string artMode = string.IsNullOrWhiteSpace(stage.image)
-            ? string.IsNullOrWhiteSpace(stage.model)
+        string artMode = stage.image == null
+            ? stage.model == null
                 ? "Base-game sprite"
                 : "GLB model"
             : "Custom image";
@@ -446,36 +515,41 @@ internal sealed class GrowableEditorUI : ModToolBehaviour
                     stage.model = null;
                     stage.sprite ??= "sprite_nature_turnip_mature";
                 }
+                stage.artAssetId = null; stage.artOriginalName = null;
+                ClearNumberInputs();
                 MarkDirty();
             });
 
-        if (!string.IsNullOrWhiteSpace(stage.sprite))
+        if (artMode == "Base-game sprite")
         {
             GUILayout.BeginHorizontal();
-            GUILayout.Label("Sprite asset", GUILayout.Width(165));
+            DrawFieldLabel("Sprite asset");
             string sprite = GUILayout.TextField(stage.sprite ?? "");
             if (sprite != stage.sprite)
             {
                 stage.sprite = sprite;
+                stage.artAssetId = null; stage.artOriginalName = null;
+                ApplyBaseGameSpriteSettings(stage);
                 MarkDirty();
             }
-            if (GUILayout.Button("Choose… ▼", GUILayout.Width(110)))
+            if (DrawActionButton("Choose… ▼", 110))
                 OpenArtworkPicker(stage);
             GUILayout.EndHorizontal();
         }
-        else if (!string.IsNullOrWhiteSpace(stage.image))
+        else if (artMode == "Custom image")
         {
             GUILayout.BeginHorizontal();
-            GUILayout.Label("Image", GUILayout.Width(165));
+            DrawFieldLabel("Image");
             string image = GUILayout.TextField(stage.image ?? "");
             if (image != stage.image)
             {
                 stage.image = image;
+                stage.artAssetId = null; stage.artOriginalName = null;
                 MarkDirty();
             }
-            if (GUILayout.Button("Choose… ▼", GUILayout.Width(110)))
+            if (DrawActionButton("Choose… ▼", 110))
                 OpenArtworkPicker(stage);
-            if (GUILayout.Button("Import…", GUILayout.Width(90)))
+            if (DrawActionButton("Import…", 90))
                 BrowseArtwork(stage);
             GUILayout.EndHorizontal();
             DrawFloat(
@@ -488,7 +562,7 @@ internal sealed class GrowableEditorUI : ModToolBehaviour
                     MarkDirty();
                 });
             GUILayout.BeginHorizontal();
-            GUILayout.Label("Pivot X / Y", GUILayout.Width(165));
+            DrawFieldLabel("Pivot X / Y");
             DrawFloatInline(
                 $"stage.{index}.pivotX",
                 stage.pivotX,
@@ -510,16 +584,17 @@ internal sealed class GrowableEditorUI : ModToolBehaviour
         else
         {
             GUILayout.BeginHorizontal();
-            GUILayout.Label("GLB model", GUILayout.Width(165));
+            DrawFieldLabel("GLB model");
             string model = GUILayout.TextField(stage.model ?? "");
             if (model != stage.model)
             {
                 stage.model = model;
+                stage.artAssetId = null; stage.artOriginalName = null;
                 MarkDirty();
             }
-            if (GUILayout.Button("Choose… ▼", GUILayout.Width(110)))
+            if (DrawActionButton("Choose… ▼", 110))
                 OpenArtworkPicker(stage);
-            if (GUILayout.Button("Import…", GUILayout.Width(90)))
+            if (DrawActionButton("Import…", 90))
                 BrowseArtwork(stage);
             GUILayout.EndHorizontal();
 
@@ -527,7 +602,7 @@ internal sealed class GrowableEditorUI : ModToolBehaviour
             if (stage.rotation.Length != 3)
                 stage.rotation = new[] { 20f, 135f, 0f };
             GUILayout.BeginHorizontal();
-            GUILayout.Label("Rotation X / Y / Z", GUILayout.Width(165));
+            DrawFieldLabel("Rotation X / Y / Z");
             for (int axis = 0; axis < 3; axis++)
             {
                 int captured = axis;
@@ -569,7 +644,7 @@ internal sealed class GrowableEditorUI : ModToolBehaviour
                     MarkDirty();
                 });
             GUILayout.BeginHorizontal();
-            GUILayout.Label("Pivot X / Y", GUILayout.Width(165));
+            DrawFieldLabel("Pivot X / Y");
             DrawFloatInline(
                 $"stage.{index}.pivotX",
                 stage.pivotX,
@@ -605,8 +680,6 @@ internal sealed class GrowableEditorUI : ModToolBehaviour
                 RenderGlbPreview(stage, index);
             GUI.enabled = true;
             GUILayout.EndHorizontal();
-            if (glbPreviewStage == index && glbPreview != null)
-                DrawStageWorldPreview(glbPreview, stage);
         }
 
         DrawFloat(
@@ -618,6 +691,18 @@ internal sealed class GrowableEditorUI : ModToolBehaviour
                 stage.scale = value;
                 MarkDirty();
             });
+        if (GUILayout.Button("Choose from shared art library…")) OpenArtLibrary(stage);
+        if (string.IsNullOrWhiteSpace(stage.sprite))
+        {
+            DrawChoice("Anchor mode", string.IsNullOrWhiteSpace(stage.anchorSprite) ? "Custom pivot" : "Match native sprite",
+                new[] { "Custom pivot", "Match native sprite" }, value =>
+                {
+                    if (value == "Custom pivot") { stage.anchorSprite = null; MarkDirty(); }
+                    else OpenAnchorPicker(stage);
+                });
+            if (!string.IsNullOrWhiteSpace(stage.anchorSprite) && DrawSingleLineChoice("Anchor: " + stage.anchorSprite + "  ▼"))
+                OpenAnchorPicker(stage);
+        }
 
         if (!finalStage)
             DrawFloat(
@@ -639,6 +724,7 @@ internal sealed class GrowableEditorUI : ModToolBehaviour
             MoveStage(index, index + 1);
         else if (action == 2)
             RemoveStage(index);
+        if (action != 0) GUIUtility.ExitGUI();
         return action != 0;
     }
 
@@ -658,7 +744,7 @@ internal sealed class GrowableEditorUI : ModToolBehaviour
             GUILayout.BeginHorizontal();
             GUILayout.Label("Result " + (index + 1));
             GUI.enabled = definition.harvest.Count > 1;
-            if (GUILayout.Button("Remove", GUILayout.Width(78)))
+            if (DrawActionButton("Remove", 78))
                 remove = true;
             GUI.enabled = true;
             GUILayout.EndHorizontal();
@@ -671,13 +757,9 @@ internal sealed class GrowableEditorUI : ModToolBehaviour
                     MarkDirty();
                 });
             GUILayout.BeginHorizontal();
-            GUILayout.Label("Choose item", GUILayout.Width(165));
-            if (GUILayout.Button(
-                    GetHarvestItemLabel(output) + "  ▼",
-                    GUILayout.MinWidth(330),
-                    GUILayout.Height(34)))
+            DrawFieldLabel("Choose item");
+            if (DrawSingleLineChoice(GetHarvestItemLabel(output) + "  ▼"))
                 OpenHarvestItemPicker(output);
-            GUILayout.FlexibleSpace();
             GUILayout.EndHorizontal();
             DrawInt(
                 "Minimum",
@@ -709,10 +791,16 @@ internal sealed class GrowableEditorUI : ModToolBehaviour
             GUILayout.EndVertical();
             if (remove)
             {
+                if (invalidNumbers.Count != 0)
+                {
+                    status = "Correct invalid numeric input before removing a harvest result.";
+                    GUIUtility.ExitGUI();
+                    return;
+                }
                 definition.harvest.RemoveAt(index);
-                numberText.Clear();
+                ClearNumberInputs();
                 MarkDirty();
-                break;
+                GUIUtility.ExitGUI();
             }
         }
 
@@ -726,17 +814,17 @@ internal sealed class GrowableEditorUI : ModToolBehaviour
                 chance = 1f
             });
             MarkDirty();
+            GUIUtility.ExitGUI();
         }
         GUILayout.EndVertical();
     }
 
     private void AddDefinition()
     {
-        if (selectedItem == null || SelectedItemInheritsNativeSeeds())
+        if (selectedItem == null || SelectedItemHasUseConflict())
         {
-            status =
-                "Cannot add growable behavior to an item that inherits " +
-                "Silverpine's native seed behavior.";
+            status = selectedItem == null ? "Select an item first." :
+                SeedCompatibility.Explain(seedConflicts[selectedItem.QualifiedId]);
             return;
         }
         definition = new GrowableDefinition
@@ -781,6 +869,7 @@ internal sealed class GrowableEditorUI : ModToolBehaviour
 
     private void SetHarvestMode(int mode)
     {
+        if (!TryPrepareStageEdit()) return;
         mode = Mathf.Clamp(mode, 0, HarvestModes.Length - 1);
         definition!.perennial = mode == 2;
         if (mode == 0)
@@ -795,7 +884,12 @@ internal sealed class GrowableEditorUI : ModToolBehaviour
         }
         else
         {
-            EnsurePerennialStages();
+            try { EnsurePerennialStages(); }
+            catch (Exception error)
+            {
+                definition.perennial = false;
+                MarkDirty(); status = "Cannot prepare perennial stages: " + error.Message; return;
+            }
             int mature = Math.Max(0, definition.stages!.Count - 2);
             definition.matureStage = definition.matureStage < 0
                 ? mature
@@ -807,7 +901,7 @@ internal sealed class GrowableEditorUI : ModToolBehaviour
                 definition.regrowStage,
                 definition.stages.Count - 2);
         }
-        numberText.Clear();
+        ClearNumberInputs();
         MarkDirty();
     }
 
@@ -829,6 +923,7 @@ internal sealed class GrowableEditorUI : ModToolBehaviour
 
     private void AddStage()
     {
+        if (!TryPrepareStageEdit()) return;
         definition!.stages ??= new List<GrowableStageDefinition>();
         if (definition.stages.Count == 0)
         {
@@ -843,12 +938,17 @@ internal sealed class GrowableEditorUI : ModToolBehaviour
         {
             GrowableStageDefinition previousFinal =
                 definition.stages[definition.stages.Count - 1];
+            GrowableStageDefinition copy;
+            try { copy = CopyStageArt(previousFinal, 0f); }
+            catch (Exception error) { status = "Cannot duplicate stage art: " + error.Message; return; }
             if (previousFinal.duration <= 0f)
                 previousFinal.duration = 24f;
-            definition.stages.Add(CopyStageArt(previousFinal, 0f));
+            definition.stages.Add(copy);
         }
         NormalizeStageIndices();
-        numberText.Clear();
+        selectedStage = definition.stages.Count - 1;
+        ClearGlbPreview();
+        ClearNumberInputs();
         MarkDirty();
     }
 
@@ -858,9 +958,12 @@ internal sealed class GrowableEditorUI : ModToolBehaviour
             from < 0 || from >= definition.stages.Count ||
             to < 0 || to >= definition.stages.Count)
             return;
+        if (!TryPrepareStageEdit()) return;
+        CancelOffsetDrag(); ClearGlbPreview();
         GrowableStageDefinition stage = definition.stages[from];
         definition.stages.RemoveAt(from);
         definition.stages.Insert(to, stage);
+        selectedStage = to;
         definition.regrowStage = RemapMovedIndex(
             definition.regrowStage,
             from,
@@ -870,7 +973,7 @@ internal sealed class GrowableEditorUI : ModToolBehaviour
             from,
             to);
         NormalizeStageIndices();
-        numberText.Clear();
+        ClearNumberInputs();
         MarkDirty();
     }
 
@@ -878,13 +981,16 @@ internal sealed class GrowableEditorUI : ModToolBehaviour
     {
         if (definition?.stages == null || definition.stages.Count <= 2)
             return;
+        if (!TryPrepareStageEdit()) return;
+        CancelOffsetDrag(); ClearGlbPreview();
         definition.stages.RemoveAt(index);
+        selectedStage = Math.Min(index, definition.stages.Count - 1);
         if (definition.regrowStage > index)
             definition.regrowStage--;
         if (definition.matureStage > index)
             definition.matureStage--;
         NormalizeStageIndices();
-        numberText.Clear();
+        ClearNumberInputs();
         MarkDirty();
     }
 
@@ -893,6 +999,10 @@ internal sealed class GrowableEditorUI : ModToolBehaviour
         if (definition?.stages == null || definition.stages.Count < 2)
             return;
         int lastNonReady = definition.stages.Count - 2;
+        // A former final stage had no timer. Once moved earlier it needs one.
+        for (int i = 0; i <= lastNonReady; i++)
+            if (definition.stages[i].duration <= 0 || !StageArtIdentity.Finite(definition.stages[i].duration))
+                definition.stages[i].duration = 24f;
         if (definition.regrowStage >= 0)
             definition.regrowStage = Mathf.Clamp(
                 definition.regrowStage,
@@ -1039,8 +1149,11 @@ internal sealed class GrowableEditorUI : ModToolBehaviour
                     stage.sprite = value.Substring("sprite|".Length);
                     stage.image = null;
                     stage.model = null;
+                    ApplyBaseGameSpriteSettings(stage);
                 }
+                stage.artAssetId = null; stage.artOriginalName = null;
                 MarkDirty();
+                ClearNumberInputs();
             },
             "Import Image / GLB…",
             () => BrowseArtwork(stage));
@@ -1049,13 +1162,17 @@ internal sealed class GrowableEditorUI : ModToolBehaviour
     private void RefreshItems()
     {
         string previous = selectedItem?.QualifiedId ?? "";
+        fittedText.Clear();
         items.Clear();
         items.AddRange(CustomItemApi.GetRegisteredItems()
             .OrderBy(value => value.PackId, StringComparer.OrdinalIgnoreCase)
             .ThenBy(value => value.DisplayName, StringComparer.OrdinalIgnoreCase));
         growableIds.Clear();
+        seedConflicts.Clear();
         foreach (CustomItemInfo item in items)
         {
+            string? conflict = SeedCompatibility.FindConflict(item.Template);
+            if (conflict != null) seedConflicts[item.QualifiedId] = conflict;
             try
             {
                 if (!string.IsNullOrWhiteSpace(
@@ -1094,10 +1211,12 @@ internal sealed class GrowableEditorUI : ModToolBehaviour
 
     private void LoadSelected()
     {
+        CancelOffsetDrag(); previewGeneration++; renderingGlbPreview = false; removeConfirmation = false; selectedStage = 0;
         ClearGlbPreview();
         definition = null;
+        loadError = ""; loadedExtensionJson = null;
         dirty = false;
-        numberText.Clear();
+        ClearNumberInputs();
         detailsScroll = Vector2.zero;
         if (selectedItem == null)
             return;
@@ -1107,43 +1226,58 @@ internal sealed class GrowableEditorUI : ModToolBehaviour
             string? json = CustomItemApi.GetItemExtensionJson(
                 selectedItem.QualifiedId,
                 ExtensionName);
+            loadedExtensionJson = json;
             if (!string.IsNullOrWhiteSpace(json))
             {
                 definition = JsonConvert.DeserializeObject<GrowableDefinition>(json!);
+                if (definition != null) EditorValidation.RequireEditable(definition);
                 if (definition != null &&
                     Enum.TryParse(
                         definition.clock,
                         ignoreCase: true,
                         out GrowableClock parsed))
                     definition.Clock = parsed;
+                if (definition?.stages != null)
+                {
+                    foreach (GrowableStageDefinition stage in definition.stages)
+                        if (!string.IsNullOrWhiteSpace(stage.sprite))
+                            ApplyBaseGameSpriteSettings(stage);
+                    EnsureStageCacheIdentities();
+                }
             }
             status = "Loaded " + selectedItem.QualifiedId;
         }
         catch (Exception exception)
         {
-            status = "Could not load growable data: " + exception.Message;
+            definition = null; dirty = false;
+            loadError = "Could not load growable data: " + exception.Message;
+            status = loadError;
             Plugin.Log.LogError(
                 $"Growables editor could not load '{selectedItem.QualifiedId}': " +
                 exception);
         }
     }
 
-    private void SaveSelected()
+    private bool SaveSelected()
     {
         if (selectedItem == null)
-            return;
+            return false;
         try
         {
+            if (!string.IsNullOrEmpty(loadError)) throw new InvalidDataException(loadError);
+            if (invalidNumbers.Count != 0)
+                throw new InvalidDataException("Correct invalid numeric input before saving: " + string.Join(", ", invalidNumbers));
+            string? currentJson = CustomItemApi.GetItemExtensionJson(selectedItem.QualifiedId, ExtensionName);
+            if (!EditorValidation.SameDocument(loadedExtensionJson, currentJson))
+                throw new InvalidDataException("This growable was changed outside this editor. Discard/reload before saving to avoid overwriting those changes.");
             string? json = null;
             if (definition != null)
             {
-                if (SelectedItemInheritsNativeSeeds())
-                    throw new InvalidDataException(
-                        "Growable behavior cannot be attached to an item " +
-                        "that inherits Silverpine's native " +
-                        "ItemComponent_Seeds. Use a component-free clone or " +
-                        "custom artwork.");
+                string? conflict = SeedCompatibility.FindConflict(selectedItem.Template);
+                if (conflict != null)
+                    throw new InvalidDataException(SeedCompatibility.Explain(conflict));
                 NormalizeModelSources();
+                EnsureStageCacheIdentities();
                 string candidate = JsonConvert.SerializeObject(
                     definition,
                     Formatting.None,
@@ -1158,6 +1292,7 @@ internal sealed class GrowableEditorUI : ModToolBehaviour
                 validation.Validate(
                     selectedItem.SourceJsonPath,
                     selectedItem.QualifiedId);
+                GrowableRegistry.ValidateReferences(validation);
                 json = candidate;
             }
 
@@ -1166,6 +1301,7 @@ internal sealed class GrowableEditorUI : ModToolBehaviour
                 selectedItem.QualifiedId,
                 ExtensionName,
                 json);
+            loadedExtensionJson = json;
             if (definition == null)
                 growableIds.Remove(selectedItem.QualifiedId);
             else
@@ -1174,6 +1310,7 @@ internal sealed class GrowableEditorUI : ModToolBehaviour
             status =
                 "Saved through Custom Item Loader. Restart Silverpine to " +
                 "apply registration changes.";
+            return true;
         }
         catch (Exception exception)
         {
@@ -1181,6 +1318,7 @@ internal sealed class GrowableEditorUI : ModToolBehaviour
             Plugin.Log.LogError(
                 $"Growables editor could not save '{selectedItem.QualifiedId}': " +
                 exception);
+            return false;
         }
     }
 
@@ -1195,13 +1333,17 @@ internal sealed class GrowableEditorUI : ModToolBehaviour
         }
 
         string selectedId = selectedItem.QualifiedId;
+        int generation = ++previewGeneration;
+        GrowableDefinition? selectedDefinition = definition;
         renderingGlbPreview = true;
         status = "Rendering one-direction GLB preview…";
         try
         {
+            EnsureStageCacheIdentities();
             string folder = Path.GetFullPath(
                 Path.GetDirectoryName(selectedItem.SourceJsonPath)!);
             NormalizeModelSource(stage, folder);
+            string suffix = stage.CacheSuffix(stageIndex);
             Sprite rendered = await CustomItemApi.RenderAndCacheGlbSpriteAsync(
                 folder,
                 selectedItem.PackId,
@@ -1211,8 +1353,10 @@ internal sealed class GrowableEditorUI : ModToolBehaviour
                 stage.zoom,
                 stage.resolution,
                 "custom_growable_editor_preview",
-                GrowableDefinition.GetStageCacheSuffix(stageIndex));
+                suffix);
             if (!open || selectedItem == null ||
+                generation != previewGeneration || !ReferenceEquals(definition, selectedDefinition) ||
+                definition?.stages?.Contains(stage) != true || stage.CacheSuffix(stageIndex) != suffix ||
                 !selectedItem.QualifiedId.Equals(
                     selectedId,
                     StringComparison.OrdinalIgnoreCase))
@@ -1223,20 +1367,22 @@ internal sealed class GrowableEditorUI : ModToolBehaviour
 
             ClearGlbPreview();
             glbPreview = rendered;
-            glbPreviewStage = stageIndex;
+            previewOwnsTexture = true;
+            glbPreviewStage = definition!.stages!.IndexOf(stage);
+            previewSourceKey = StagePreviewKey(stage);
             status =
                 "Rendered one-direction GLB preview and updated its CIL " +
                 "distribution cache.";
         }
         catch (Exception exception)
         {
-            status = "GLB preview failed: " + exception.Message;
+            if (open && generation == previewGeneration) status = "GLB preview failed: " + exception.Message;
             Plugin.Log.LogError(
                 "Growables editor GLB preview failed: " + exception);
         }
         finally
         {
-            renderingGlbPreview = false;
+            if (generation == previewGeneration) renderingGlbPreview = false;
         }
     }
 
@@ -1262,7 +1408,7 @@ internal sealed class GrowableEditorUI : ModToolBehaviour
                     stage.zoom,
                     stage.resolution,
                     "custom_growable_editor_cached_preview",
-                    GrowableDefinition.GetStageCacheSuffix(stageIndex),
+                    stage.CacheSuffix(stageIndex),
                     out Sprite cached))
             {
                 status =
@@ -1272,7 +1418,9 @@ internal sealed class GrowableEditorUI : ModToolBehaviour
             }
             ClearGlbPreview();
             glbPreview = cached;
+            previewOwnsTexture = true;
             glbPreviewStage = stageIndex;
+            previewSourceKey = StagePreviewKey(stage);
             status = "Loaded the CIL cached stage sprite.";
         }
         catch (Exception exception)
@@ -1313,98 +1461,14 @@ internal sealed class GrowableEditorUI : ModToolBehaviour
                 storedReference,
                 StringComparison.OrdinalIgnoreCase))
             return;
+        int index = definition!.stages!.IndexOf(stage);
+        string oldSuffix = stage.CacheSuffix(index);
+        string newSuffix = StageArtIdentity.Suffix(stage.cacheId, index, storedReference, stage.rotation, stage.zoom, stage.resolution);
+        StageCacheMigration.CopyGlbCache(packFolder, selectedItem!.PackId, selectedItem.ItemId, oldSuffix, newSuffix);
         stage.model = storedReference;
         MarkDirty();
     }
 
-    private void DrawStageWorldPreview(
-        Sprite sprite,
-        GrowableStageDefinition stage)
-    {
-        GUILayout.BeginVertical(GUI.skin.box);
-        GUILayout.Label("In-game size comparison");
-        Rect rect = GUILayoutUtility.GetRect(
-            280f,
-            520f,
-            300f,
-            300f,
-            GUILayout.ExpandWidth(true));
-        Color old = GUI.color;
-        GUI.color = new Color(0.11f, 0.16f, 0.13f, 1f);
-        GUI.DrawTexture(rect, Texture2D.whiteTexture);
-        GUI.color = old;
-
-        float baseScale = definition == null ||
-            float.IsNaN(definition.scale) ||
-            float.IsInfinity(definition.scale) ||
-            definition.scale <= 0f
-                ? 1f
-                : definition.scale;
-        float stageScale = float.IsNaN(stage.scale) ||
-            float.IsInfinity(stage.scale) || stage.scale <= 0f
-                ? 1f
-                : stage.scale;
-        float effectiveScale = baseScale * stageScale;
-        float pixelsPerUnit = float.IsNaN(stage.pixelsPerUnit) ||
-            float.IsInfinity(stage.pixelsPerUnit) ||
-            stage.pixelsPerUnit <= 0f
-                ? 32f
-                : stage.pixelsPerUnit;
-        float worldWidth = sprite.rect.width / pixelsPerUnit * effectiveScale;
-        float worldHeight = sprite.rect.height / pixelsPerUnit * effectiveScale;
-        float pivotX = Mathf.Clamp01(stage.pivotX);
-        float pivotY = Mathf.Clamp01(stage.pivotY);
-
-        float minimumX = Mathf.Min(-0.5f, -pivotX * worldWidth);
-        float maximumX = Mathf.Max(0.5f, (1f - pivotX) * worldWidth);
-        float minimumY = Mathf.Min(-0.5f, -pivotY * worldHeight);
-        float maximumY = Mathf.Max(0.5f, (1f - pivotY) * worldHeight);
-        Rect inner = new(
-            rect.x + 16f,
-            rect.y + 16f,
-            rect.width - 32f,
-            rect.height - 32f);
-        float tileSize = Mathf.Min(
-            TerrainTileScreenSize,
-            inner.width / Mathf.Max(1f, maximumX - minimumX),
-            inner.height / Mathf.Max(1f, maximumY - minimumY));
-        float centerX = (minimumX + maximumX) * 0.5f;
-        float centerY = (minimumY + maximumY) * 0.5f;
-        Vector2 origin = new(
-            inner.center.x - centerX * tileSize,
-            inner.center.y + centerY * tileSize);
-
-        Rect tileRect = new(
-            origin.x - tileSize * 0.5f,
-            origin.y - tileSize * 0.5f,
-            tileSize,
-            tileSize);
-        DrawGrassTerrainTile(tileRect);
-        Rect spriteRect = new(
-            origin.x - pivotX * worldWidth * tileSize,
-            origin.y - (1f - pivotY) * worldHeight * tileSize,
-            worldWidth * tileSize,
-            worldHeight * tileSize);
-        GUI.color = new Color(0f, 0f, 0f, 0.38f);
-        GUI.DrawTexture(
-            new Rect(
-                origin.x - Mathf.Min(tileSize * 0.4f, spriteRect.width * 0.32f),
-                origin.y - 3f,
-                Mathf.Min(tileSize * 0.8f, spriteRect.width * 0.64f),
-                Mathf.Max(4f, Mathf.Min(tileSize * 0.08f, spriteRect.height * 0.08f))),
-            Texture2D.whiteTexture);
-        GUI.color = Color.white;
-        DrawSpriteTexture(sprite, spriteRect);
-        GUI.color = old;
-
-        GUILayout.Label(
-            $"Plant: {worldWidth:0.###} × {worldHeight:0.###} tiles; " +
-            "grass turf: 1 × 1 tile.");
-        GUILayout.Label(
-            $"Effective scale: {baseScale:0.###} base × " +
-            $"{stageScale:0.###} stage = {effectiveScale:0.###}×.");
-        GUILayout.EndVertical();
-    }
 
     private void DrawGrassTerrainTile(Rect rect)
     {
@@ -1491,7 +1555,10 @@ internal sealed class GrowableEditorUI : ModToolBehaviour
     {
         if (selectedItem == null)
             return;
+        if (invalidNumbers.Count != 0) { status = "Correct invalid numeric input before importing artwork."; return; }
         filePickerOpen = true;
+        CustomItemInfo owner = selectedItem;
+        GrowableDefinition? ownerDefinition = definition;
         try
         {
             FilePickerUI.GetFileSelection(
@@ -1506,6 +1573,8 @@ internal sealed class GrowableEditorUI : ModToolBehaviour
                     filePickerOpen = false;
                     if (selected == "Exit")
                         return;
+                    if (!open || !ReferenceEquals(selectedItem, owner) || !ReferenceEquals(definition, ownerDefinition) ||
+                        definition?.stages?.Contains(stage) != true) return;
                     try
                     {
                         string folder = Path.GetDirectoryName(
@@ -1523,22 +1592,14 @@ internal sealed class GrowableEditorUI : ModToolBehaviour
                         }
                         else
                         {
-                            string assets = Path.Combine(folder, "assets");
-                            Directory.CreateDirectory(assets);
-                            string destination = Path.Combine(
-                                assets,
-                                Path.GetFileName(selected));
-                            if (!Path.GetFullPath(selected).Equals(
-                                    Path.GetFullPath(destination),
-                                    StringComparison.OrdinalIgnoreCase))
-                                File.Copy(selected, destination, overwrite: true);
-                            string relative = MakeRelativePath(folder, destination)
-                                .Replace(Path.DirectorySeparatorChar, '/');
-                            stage.image = relative;
+                            stage.image = SharedArtApi.ImportImage(selected, folder);
                             stage.model = null;
                             stage.sprite = null;
                             status = "Imported growable art as " + stage.image;
                         }
+                        stage.artAssetId = null;
+                        stage.artOriginalName = Path.GetFileNameWithoutExtension(selected);
+                        ClearNumberInputs();
                         MarkDirty();
                     }
                     catch (Exception exception)
@@ -1568,11 +1629,8 @@ internal sealed class GrowableEditorUI : ModToolBehaviour
             item.QualifiedId.Contains(search, StringComparison.OrdinalIgnoreCase);
     }
 
-    private bool SelectedItemInheritsNativeSeeds() =>
-        selectedItem != null && InheritsNativeSeeds(selectedItem);
-
-    private static bool InheritsNativeSeeds(CustomItemInfo item) =>
-        item.Template.TryGetItemComponent<ItemComponent_Seeds>(out _);
+    private bool SelectedItemHasUseConflict() =>
+        selectedItem != null && seedConflicts.ContainsKey(selectedItem.QualifiedId);
 
     private void DrawText(
         string label,
@@ -1580,7 +1638,7 @@ internal sealed class GrowableEditorUI : ModToolBehaviour
         Action<string> assign)
     {
         GUILayout.BeginHorizontal();
-        GUILayout.Label(label, GUILayout.Width(165));
+        DrawFieldLabel(label);
         string next = GUILayout.TextField(value ?? "");
         if (next != value)
             assign(next);
@@ -1593,7 +1651,7 @@ internal sealed class GrowableEditorUI : ModToolBehaviour
         Action<bool> assign)
     {
         GUILayout.BeginHorizontal();
-        GUILayout.Label(label, GUILayout.Width(165));
+        DrawFieldLabel(label);
         bool next = GUILayout.Toggle(value, value ? "Enabled" : "Disabled");
         if (next != value)
             assign(next);
@@ -1607,17 +1665,19 @@ internal sealed class GrowableEditorUI : ModToolBehaviour
         Action<int> assign)
     {
         GUILayout.BeginHorizontal();
-        GUILayout.Label(label, GUILayout.Width(165));
-        string next = GUILayout.TextField(NumberText(
+        DrawFieldLabel(label);
+        string previous = NumberText(
             key,
-            value.ToString(CultureInfo.InvariantCulture)));
+            value.ToString(CultureInfo.InvariantCulture));
+        string next = GUILayout.TextField(previous);
         numberText[key] = next;
-        if (int.TryParse(
-                next,
-                NumberStyles.Integer,
-                CultureInfo.InvariantCulture,
-                out int parsed) && parsed != value)
-            assign(parsed);
+        if (next != previous) MarkDirty();
+        if (EditorValidation.TryInt(next, out int parsed))
+        {
+            invalidNumbers.Remove(key);
+            if (parsed != value) assign(parsed);
+        }
+        else { invalidNumbers.Add(key); GUILayout.Label("Invalid number"); }
         GUILayout.EndHorizontal();
     }
 
@@ -1628,7 +1688,7 @@ internal sealed class GrowableEditorUI : ModToolBehaviour
         Action<float> assign)
     {
         GUILayout.BeginHorizontal();
-        GUILayout.Label(label, GUILayout.Width(165));
+        DrawFieldLabel(label);
         DrawFloatInline(key, value, assign);
         GUILayout.EndHorizontal();
     }
@@ -1638,18 +1698,18 @@ internal sealed class GrowableEditorUI : ModToolBehaviour
         float value,
         Action<float> assign)
     {
-        string next = GUILayout.TextField(
-            NumberText(
-                key,
-                value.ToString("0.###", CultureInfo.InvariantCulture)),
+        string previous = NumberText(key, value.ToString("R", CultureInfo.InvariantCulture));
+        string next = GUILayout.TextField(previous,
             GUILayout.MinWidth(60));
         numberText[key] = next;
-        if (float.TryParse(
-                next,
-                NumberStyles.Float,
-                CultureInfo.InvariantCulture,
-                out float parsed) && !Mathf.Approximately(parsed, value))
-            assign(parsed);
+        if (next != previous) MarkDirty();
+        if (EditorValidation.TryFloat(next, out float parsed) &&
+            (!key.StartsWith("offset.", StringComparison.Ordinal) || Math.Abs(parsed) <= 100))
+        {
+            invalidNumbers.Remove(key);
+            if (parsed != value) assign(parsed);
+        }
+        else { invalidNumbers.Add(key); GUILayout.Label("Invalid number"); }
     }
 
     private void DrawChoice(
@@ -1659,12 +1719,9 @@ internal sealed class GrowableEditorUI : ModToolBehaviour
         Action<string> assign)
     {
         GUILayout.BeginHorizontal();
-        GUILayout.Label(label, GUILayout.Width(165));
+        DrawFieldLabel(label);
         int index = IndexOf(values, current);
-        if (GUILayout.Button(
-                values[index] + "  ▼",
-                GUILayout.Width(285),
-                GUILayout.Height(30)))
+        if (DrawSingleLineChoice(values[index] + "  ▼"))
             OpenPicker(
                 "Choose " + label,
                 values[index],
@@ -1675,7 +1732,6 @@ internal sealed class GrowableEditorUI : ModToolBehaviour
                     SearchText = value
                 }),
                 assign);
-        GUILayout.FlexibleSpace();
         GUILayout.EndHorizontal();
     }
 
@@ -1688,11 +1744,8 @@ internal sealed class GrowableEditorUI : ModToolBehaviour
         maximum = Math.Max(0, maximum);
         current = Mathf.Clamp(current, 0, maximum);
         GUILayout.BeginHorizontal();
-        GUILayout.Label(label, GUILayout.Width(165));
-        if (GUILayout.Button(
-                GetStagePickerLabel(current) + "  ▼",
-                GUILayout.Width(285),
-                GUILayout.Height(30)))
+        DrawFieldLabel(label);
+        if (DrawSingleLineChoice(GetStagePickerLabel(current) + "  ▼"))
         {
             var options = new List<PickerOption>();
             for (int index = 0; index <= maximum; index++)
@@ -1720,7 +1773,6 @@ internal sealed class GrowableEditorUI : ModToolBehaviour
                         assign(parsed);
                 });
         }
-        GUILayout.FlexibleSpace();
         GUILayout.EndHorizontal();
     }
 
@@ -1731,7 +1783,7 @@ internal sealed class GrowableEditorUI : ModToolBehaviour
             index >= 0 && index < definition.stages.Count)
         {
             GrowableStageDefinition stage = definition.stages[index];
-            string art = !string.IsNullOrWhiteSpace(stage.sprite)
+            string art = !string.IsNullOrWhiteSpace(stage.artOriginalName) ? stage.artOriginalName! : !string.IsNullOrWhiteSpace(stage.sprite)
                 ? stage.sprite!
                 : !string.IsNullOrWhiteSpace(stage.image)
                     ? Path.GetFileName(stage.image)
@@ -1751,6 +1803,8 @@ internal sealed class GrowableEditorUI : ModToolBehaviour
         string? actionLabel = null,
         Action? action = null)
     {
+        if (invalidNumbers.Count != 0)
+        { status = "Correct invalid numeric input before changing selection: " + string.Join(", ", invalidNumbers); return; }
         pickerOptions.Clear();
         pickerOptions.AddRange(options);
         pickerTitle = title;
@@ -1761,6 +1815,8 @@ internal sealed class GrowableEditorUI : ModToolBehaviour
         pickerActionLabel = actionLabel ?? "";
         pickerAction = action;
         pickerOpen = true;
+        filteredPickerOptions = null; pickerPage = 0;
+        GUIUtility.ExitGUI();
     }
 
     private void DrawPickerScreen()
@@ -1769,19 +1825,17 @@ internal sealed class GrowableEditorUI : ModToolBehaviour
         GUILayout.Label(pickerTitle, GUILayout.Width(410));
         GUILayout.Label(pickerOptions.Count + " choices");
         if (!string.IsNullOrWhiteSpace(pickerActionLabel) &&
-            GUILayout.Button(pickerActionLabel, GUILayout.Width(190)))
+            DrawActionButton(pickerActionLabel, 190))
         {
             Action? action = pickerAction;
             ClosePicker();
             action?.Invoke();
-            GUILayout.EndHorizontal();
-            return;
+            GUIUtility.ExitGUI();
         }
-        if (GUILayout.Button("Cancel", GUILayout.Width(110)))
+        if (DrawActionButton("Cancel", 110))
         {
             ClosePicker();
-            GUILayout.EndHorizontal();
-            return;
+            GUIUtility.ExitGUI();
         }
         GUILayout.EndHorizontal();
 
@@ -1789,21 +1843,31 @@ internal sealed class GrowableEditorUI : ModToolBehaviour
         GUILayout.Label(
             "Search by name, ID, category, or asset name. Escape returns to " +
             "the Growables Editor without changing the value.");
+        GUILayout.Label("Search", editorFieldLabel!);
         GUILayout.BeginHorizontal();
-        GUILayout.Label("Search", GUILayout.Width(72));
         pickerSearch = GUILayout.TextField(
             pickerSearch ?? "",
-            GUILayout.Height(32));
-        if (GUILayout.Button("Clear", GUILayout.Width(80)))
+            GUILayout.MinHeight(44));
+        if (DrawActionButton("Clear", 80))
             pickerSearch = "";
         GUILayout.EndHorizontal();
 
+        if (filteredPickerOptions == null || filteredPickerSearch != pickerSearch)
+        {
+            filteredPickerOptions = pickerOptions.Where(PickerMatches).ToArray();
+            filteredPickerSearch = pickerSearch; pickerPage = 0;
+        }
+        int pages = Math.Max(1, (filteredPickerOptions.Length + PickerPageSize - 1) / PickerPageSize);
+        GUILayout.BeginHorizontal();
+        if (DrawActionButton("Previous", 110)) { pickerPage = (pickerPage + pages - 1) % pages; pickerScroll = Vector2.zero; GUIUtility.ExitGUI(); }
+        GUILayout.Label($"Page {pickerPage + 1} / {pages} · {filteredPickerOptions.Length} matches");
+        if (DrawActionButton("Next", 110)) { pickerPage = (pickerPage + 1) % pages; pickerScroll = Vector2.zero; GUIUtility.ExitGUI(); }
+        GUILayout.EndHorizontal();
         pickerScroll = GUILayout.BeginScrollView(pickerScroll, GUI.skin.box);
         int shown = 0;
-        foreach (PickerOption option in pickerOptions)
+        for (int i = pickerPage * PickerPageSize; i < Math.Min(filteredPickerOptions.Length, (pickerPage + 1) * PickerPageSize); i++)
         {
-            if (!PickerMatches(option))
-                continue;
+            PickerOption option = filteredPickerOptions[i];
             shown++;
             Color old = GUI.backgroundColor;
             if (option.Value.Equals(
@@ -1817,7 +1881,7 @@ internal sealed class GrowableEditorUI : ModToolBehaviour
                 ClosePicker();
                 callback?.Invoke(value);
                 GUI.backgroundColor = old;
-                break;
+                GUIUtility.ExitGUI();
             }
             GUI.backgroundColor = old;
         }
@@ -1848,6 +1912,7 @@ internal sealed class GrowableEditorUI : ModToolBehaviour
         pickerCallback = null;
         pickerAction = null;
         pickerOptions.Clear();
+        filteredPickerOptions = null; filteredPickerSearch = null; pickerPage = 0;
         pickerTitle = "";
         pickerCurrent = "";
         pickerSearch = "";
@@ -1864,6 +1929,8 @@ internal sealed class GrowableEditorUI : ModToolBehaviour
         }
         return value;
     }
+
+    private void ClearNumberInputs() { numberText.Clear(); invalidNumbers.Clear(); }
 
     private void Set(ref string? field, string value)
     {
@@ -1901,12 +1968,14 @@ internal sealed class GrowableEditorUI : ModToolBehaviour
 
     private void Close()
     {
+        CancelOffsetDrag(); previewGeneration++; renderingGlbPreview = false;
+        ClearLibraryThumbnails(); libraryOpen = false; closeConfirmation = false;
         ClearGlbPreview();
         filePickerOpen = false;
         ClosePicker();
         open = false;
         dirty = false;
-        numberText.Clear();
+        ClearNumberInputs();
         items.Clear();
         growableIds.Clear();
         selectedItem = null;
@@ -1919,6 +1988,7 @@ internal sealed class GrowableEditorUI : ModToolBehaviour
         string sprite,
         float duration) => new()
     {
+        cacheId = Guid.NewGuid().ToString("N"),
         sprite = sprite,
         duration = duration,
         pixelsPerUnit = 32f,
@@ -1926,10 +1996,16 @@ internal sealed class GrowableEditorUI : ModToolBehaviour
         pivotY = 0.5f
     };
 
-    private static GrowableStageDefinition CopyStageArt(
+    private GrowableStageDefinition CopyStageArt(
         GrowableStageDefinition source,
-        float duration) => new()
+        float duration)
     {
+        var copy = new GrowableStageDefinition
+        {
+        cacheId = Guid.NewGuid().ToString("N"),
+        anchorSprite = source.anchorSprite,
+        offsetX = source.offsetX, offsetY = source.offsetY,
+        artAssetId = source.artAssetId, artOriginalName = source.artOriginalName,
         sprite = source.sprite,
         image = source.image,
         model = source.model,
@@ -1941,12 +2017,40 @@ internal sealed class GrowableEditorUI : ModToolBehaviour
         pixelsPerUnit = source.pixelsPerUnit,
         pivotX = source.pivotX,
         pivotY = source.pivotY
-    };
+        };
+        if (source.extensionData != null)
+            copy.extensionData = source.extensionData.ToDictionary(pair => pair.Key, pair => pair.Value.DeepClone());
+        if (!string.IsNullOrWhiteSpace(source.model) && selectedItem != null)
+        {
+            int index = definition!.stages!.IndexOf(source);
+            StageCacheMigration.CopyGlbCache(Path.GetDirectoryName(selectedItem.SourceJsonPath)!, selectedItem.PackId,
+                selectedItem.ItemId, source.CacheSuffix(index), copy.CacheSuffix(index));
+        }
+        return copy;
+    }
+
+    private static void ApplyBaseGameSpriteSettings(
+        GrowableStageDefinition stage)
+    {
+        if (string.IsNullOrWhiteSpace(stage.sprite) ||
+            !GrowableRegistry.TryGetBaseGameSpriteSettings(
+                stage.sprite,
+                out float pixelsPerUnit,
+                out Vector2 pivot))
+            return;
+        stage.pixelsPerUnit = pixelsPerUnit;
+        stage.pivotX = pivot.x;
+        stage.pivotY = pivot.y;
+    }
 
     private void ClearGlbPreview()
     {
+        if (previewVisual != null) Destroy(previewVisual);
+        previewVisual = null; previewGeometryKey = null; previewSourceKey = null;
         if (glbPreview != null)
-            DestroySpriteAndTexture(glbPreview);
+        {
+            if (previewOwnsTexture) DestroySpriteAndTexture(glbPreview);
+        }
         glbPreview = null;
         glbPreviewStage = -1;
     }

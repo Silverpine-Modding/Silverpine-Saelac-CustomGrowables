@@ -18,6 +18,7 @@ internal sealed class GrowableDefinition
     public bool playerPropertyOnly = true;
     public bool allowRoofed;
     public bool growsInWinter;
+    public string[]? growthSeasons;
     public bool blocksMovement;
     public bool replaceExistingPlants = true;
     public int interactionTurns = 5;
@@ -44,7 +45,15 @@ internal sealed class GrowableDefinition
     internal GrowableClock Clock;
 
     [JsonIgnore]
+    internal int GrowthSeasonMask = GrowthSeasons.WithoutWinter;
+
+    [JsonIgnore]
     internal GameObject Template = null!;
+
+    [JsonIgnore]
+    internal readonly List<Sprite> OwnedSprites = new();
+    [JsonIgnore]
+    internal readonly List<Texture2D> OwnedTextures = new();
 
     [JsonIgnore]
     internal string PackDirectory = "";
@@ -54,9 +63,6 @@ internal sealed class GrowableDefinition
 
     [JsonIgnore]
     internal string ItemId = "";
-
-    internal static string GetStageCacheSuffix(int stageIndex) =>
-        "__growable_stage_" + stageIndex;
 
     internal bool IsHarvestReady(int stageIndex) =>
         stages != null && stageIndex >= stages.Count - 1;
@@ -70,13 +76,13 @@ internal sealed class GrowableDefinition
     internal bool HasReachedMaturityStage(int stageIndex) =>
         stageIndex >= EffectiveMatureStage;
 
-    internal float GetStageDuration(int stageIndex)
+    internal double GetStageDuration(int stageIndex)
     {
         if (stages == null || stageIndex < 0 || stageIndex >= stages.Count - 1)
             return 0f;
         float duration = stages[stageIndex].duration;
         return Clock == GrowableClock.RealTimeHours
-            ? duration * 60f * 60f
+            ? duration * 3600d
             : duration;
     }
 
@@ -84,11 +90,11 @@ internal sealed class GrowableDefinition
     {
         if (stages == null)
             return "";
-        float total = 0f;
+        double total = 0;
         for (int index = 0; index < stages.Count - 1; index++)
             total += stages[index].duration;
         string value = total.ToString(
-            total == Mathf.Round(total) ? "0" : "0.##",
+            total == Math.Round(total) ? "0" : "0.##",
             System.Globalization.CultureInfo.InvariantCulture);
         return Clock == GrowableClock.RealTimeHours
             ? value + (total == 1f ? " real-world hour" : " real-world hours")
@@ -109,15 +115,22 @@ internal sealed class GrowableDefinition
             ? qualifiedId
             : visibleName!.Trim();
 
-        if (!Enum.TryParse(clock, ignoreCase: true, out GrowableClock parsed))
+        if (!Enum.TryParse(clock, ignoreCase: true, out GrowableClock parsed) ||
+            !Enum.IsDefined(typeof(GrowableClock), parsed))
             throw new InvalidDataException(
                 $"growable.clock must be {nameof(GrowableClock.RealTimeHours)} " +
                 $"or {nameof(GrowableClock.GameTurns)}.");
         Clock = parsed;
+        GrowthSeasonMask = GrowthSeasons.Resolve(growthSeasons, growsInWinter);
+        if (growthSeasons != null)
+            growthSeasons = GrowthSeasons.NamesFor(GrowthSeasonMask);
 
         if (stages == null || stages.Count < 2)
             throw new InvalidDataException(
                 "growable.stages requires at least an initial and mature stage.");
+        if (stages.Any(stage => stage == null)) throw new InvalidDataException("Stages cannot contain null entries.");
+        if (stages.Where(s => !string.IsNullOrEmpty(s.cacheId)).GroupBy(s => s.cacheId, StringComparer.OrdinalIgnoreCase).Any(g => g.Count() > 1))
+            throw new InvalidDataException("Stage cache IDs must be unique.");
         for (int index = 0; index < stages.Count; index++)
             stages[index].Validate(
                 jsonPath,
@@ -129,6 +142,7 @@ internal sealed class GrowableDefinition
         if (harvest == null || harvest.Count == 0)
             throw new InvalidDataException(
                 "growable.harvest requires at least one item result.");
+        if (harvest.Any(output => output == null)) throw new InvalidDataException("Harvest outputs cannot contain null entries.");
         for (int index = 0; index < harvest.Count; index++)
             harvest[index].Validate(index);
 
@@ -159,6 +173,12 @@ internal sealed class GrowableDefinition
 
 internal sealed class GrowableStageDefinition
 {
+    public string? cacheId;
+    public string? artAssetId;
+    public string? artOriginalName;
+    public string? anchorSprite;
+    public float offsetX;
+    public float offsetY;
     public string? sprite;
     public string? image;
     public string? model;
@@ -176,6 +196,8 @@ internal sealed class GrowableStageDefinition
 
     [JsonIgnore]
     internal Sprite RuntimeSprite = null!;
+
+    internal string CacheSuffix(int index) => StageArtIdentity.Suffix(cacheId, index, model, rotation, zoom, resolution);
 
     [JsonIgnore]
     internal Vector3 ModelRotation => rotation is { Length: 3 }
@@ -208,7 +230,11 @@ internal sealed class GrowableStageDefinition
             float.IsInfinity(pixelsPerUnit))
             throw new InvalidDataException(
                 $"growable.stages[{index}].pixelsPerUnit must be positive.");
-        if (pivotX < 0f || pivotX > 1f || pivotY < 0f || pivotY > 1f)
+        StageArtIdentity.ValidateOffset(offsetX, offsetY);
+        if (cacheId != null && (!Guid.TryParseExact(cacheId, "N", out _)))
+            throw new InvalidDataException("Stage cache ID must be a 32-character GUID.");
+        if (!StageArtIdentity.Finite(pivotX) || !StageArtIdentity.Finite(pivotY) ||
+            pivotX < 0f || pivotX > 1f || pivotY < 0f || pivotY > 1f)
             throw new InvalidDataException(
                 $"growable.stages[{index}] pivot values must be between 0 and 1.");
         if (rotation != null &&
@@ -259,6 +285,7 @@ internal sealed class GrowableStageDefinition
         {
             string modelReference = model!.Trim()
                 .Replace(Path.DirectorySeparatorChar, '/');
+            model = modelReference;
             if (!Path.GetExtension(modelReference).Equals(
                     ".glb",
                     StringComparison.OrdinalIgnoreCase))
@@ -269,17 +296,16 @@ internal sealed class GrowableStageDefinition
                 packDirectory,
                 modelReference,
                 requireExists: false);
-            string cachePath = CustomItemApi.GetGlbSpriteCachePath(
+            string cachePath = GlbCacheApi.GetReadableGlbCachePath(
                 packDirectory,
                 packId,
                 itemId,
-                GrowableDefinition.GetStageCacheSuffix(index));
+                CacheSuffix(index));
             if (!File.Exists(sourcePath) && !File.Exists(cachePath))
                 throw new FileNotFoundException(
                     $"Growable stage {index} has no shared authoring GLB and " +
                     $"no distributable cached sprite: {cachePath}",
                     sourcePath);
-            model = modelReference;
         }
         else
         {

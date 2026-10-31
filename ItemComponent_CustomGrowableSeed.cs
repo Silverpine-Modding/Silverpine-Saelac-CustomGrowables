@@ -1,5 +1,6 @@
 #nullable enable
 
+using System;
 using System.IO;
 using UnityEngine;
 
@@ -8,6 +9,7 @@ namespace SilverpineMods.CustomGrowables;
 public sealed class ItemComponent_CustomGrowableSeed : ItemComponent
 {
     private string growableId = "";
+    private bool planting;
 
     public ItemComponent_CustomGrowableSeed()
     {
@@ -44,13 +46,20 @@ public sealed class ItemComponent_CustomGrowableSeed : ItemComponent
             $"<color=\"yellow\">{definition.GetDurationDescription()}</color>.";
         if (definition.playerPropertyOnly)
             description += "\nCan only be planted on your own property.";
-        if (!definition.growsInWinter)
-            description += "\nGrowth pauses during winter.";
+        description += definition.GrowthSeasonMask == GrowthSeasons.All
+            ? "\nGrows in all seasons."
+            : "\nGrows during: " + string.Join(", ", GrowthSeasons.NamesFor(definition.GrowthSeasonMask)) +
+                ". Growth and regrowth pause in other seasons.";
         return description;
     }
 
     public override void OnUse()
     {
+        Player player = Player.Instance;
+        Item seed = item;
+        Inventory? source = seed?.inventory;
+        if (planting || player == null || WorldInfoManager.Instance == null ||
+            seed == null || source == null || !source.ContainsItem(seed)) return;
         if (!GrowableRegistry.TryGet(
                 growableId,
                 out GrowableDefinition definition))
@@ -60,7 +69,7 @@ public sealed class ItemComponent_CustomGrowableSeed : ItemComponent
             return;
         }
 
-        Vector2Int position = Player.Instance.transform.GetVector2IntPosition();
+        Vector2Int position = player.transform.GetVector2IntPosition();
         bool propertyAllowed = !definition.playerPropertyOnly ||
             WorldInfoManager.Instance.IsOnPlayerOwnedPlot(position);
         bool roofAllowed = definition.allowRoofed ||
@@ -75,16 +84,40 @@ public sealed class ItemComponent_CustomGrowableSeed : ItemComponent
             "sound_loop_shoveling",
             1f,
             position);
-        Player.Instance.StartLongInteraction(
+        planting = true;
+        bool completed = false;
+        bool completing = false;
+        void Finish()
+        {
+            if (completed) return;
+            completed = true;
+            planting = false;
+            if (AudioPlayer.Instance != null) AudioPlayer.Instance.StopLoop(position);
+        }
+        try { player.StartLongInteraction(
             () =>
             {
-                if (definition.replaceExistingPlants)
-                    PlayerAbility_Construct.DestroyPlantAtPosition(position);
-                GrowableRegistry.Plant(definition, position);
-                item.RemoveItemFromInventory();
+                if (completed || completing) return;
+                completing = true;
+                try
+                {
+                    if (player == null || player != Player.Instance || !source.ContainsItem(seed) || seed.inventory != source ||
+                        player.transform.GetVector2IntPosition() != position || WorldInfoManager.Instance == null) return;
+                    if ((definition.playerPropertyOnly && !WorldInfoManager.Instance.IsOnPlayerOwnedPlot(position)) ||
+                        (!definition.allowRoofed && TileTags.HasTileTag(position, TileTag.Roofed))) return;
+                    GrowableRegistry.Plant(definition, position);
+                    seed.RemoveItemFromInventory();
+                }
+                catch (Exception error) { Plugin.Log.LogError("Planting failed: " + error); }
+                finally { Finish(); }
             },
             definition.interactionTurns,
             null,
-            () => AudioPlayer.Instance.StopLoop(position));
+            Finish); }
+        catch
+        {
+            Finish();
+            throw;
+        }
     }
 }

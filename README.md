@@ -1,6 +1,6 @@
 # Custom Growables
 
-A BepInEx add-on for Silverpine 1.7.3 and Custom Item Loader 2.9.0. It turns
+A BepInEx add-on for Silverpine 1.7.3 and Custom Item Loader 3.0.0. It turns
 ordinary Custom Item Loader items into plantable, persistent growables by
 reading an optional `growable` block from the same item definition.
 
@@ -12,12 +12,15 @@ Custom Growables supports:
 - Per-stage size multipliers layered on the plant's base world scale.
 - Real-world-hour or processed-game-turn growth.
 - Save/load persistence and offline real-time progress.
-- Winter growth pausing.
+- Per-plant Spring / Summer / Autumn / Winter growth seasons, including regrowth.
 - Player-property and roof planting restrictions.
 - Multiple harvest outputs with quantity ranges and chances.
 - Base-game or Custom Item Loader harvest items.
 - Optional crop regrowth or persistent perennial harvest cycles.
 - Separate saved maturity and harvest-readiness state for trees and bushes.
+- Native tree-style render layering and Y-sorting so tall growables draw over
+  terrain and wall tiles from their planted tile instead of falling beneath
+  the tile layer.
 - A dedicated in-game Growables Editor backed by CIL's item and pack APIs.
 - Native-style player and NPC harvesting interactions.
 - Save-safe assembly-qualified serialization for the add-on's custom seed
@@ -26,8 +29,8 @@ Custom Growables supports:
 ## Requirements
 
 - BepInEx for Silverpine 1.7.3
-- Silverpine Modding Tools 1.4.0 or newer
-- Custom Item Loader 2.9.0 or newer
+- Silverpine Modding Tools 1.13.0 or newer
+- Custom Item Loader 3.0.0 or newer (including its add-on GLB-cache API)
 
 Install `CustomGrowables.dll` in:
 
@@ -45,10 +48,54 @@ Source GLBs are authoring assets shared with Custom Item Loader and are kept
 outside distributable packs in:
 
 ```text
-BepInEx/config/CustomItemLoaderModels/
+BepInEx/shared/ArtLibrary/models/
 ```
 
 ## In-game Growables Editor
+
+Version 1.7.3 corrects sidebar overflow that remained in 1.7.2. The sidebar is
+420 design pixels wide, Search has its own single-line label, and item cards
+reserve separate lines for the name and smaller ID. Long values use measured
+ellipsis instead of wrapping into neighboring rows. Hover a card or truncated
+choice to read its full value. Pack/stage choices and the selected-item header
+also stay single-line. Fitted text is cached, and inherited skin dimensions
+are reset so labels are not clipped by fixed-height styles. This update changes
+only Growables; Item Loader is maintained separately.
+
+Version 1.7.2 improves text spacing: short action buttons measure their text
+instead of wrapping inside narrow fixed widths; field labels have wider,
+single-line columns; and dropdowns use the available row width. Sidebar and
+preview panels are wider, controls have sufficient height, and X/Y offsets
+share a compact row. Help text and long item names still wrap when needed.
+This follows Item Loader 3.0.2's matching layout correction. Build/regression
+checks are headless; live layout at different resolutions still needs checking.
+
+Version 1.7.0 adds **Planting → Growth seasons**. Toggle any combination of
+Spring, Summer, Autumn, and Winter, or choose All seasons. At least one season
+must be selected. Growth and post-harvest regrowth pause outside those seasons
+without losing progress or maturity. Planting and harvesting already-ripe
+plants remain available year-round. Save the pack and restart to apply edits.
+
+Version 1.6.0 matches Item Loader's redesigned editor: a pack/item sidebar,
+Lifecycle / Stages & Art / Harvest / Planting tabs, and a persistent stage
+preview. Select one stage to edit and preview at a time. All art sources,
+including native sprites and imported images, preview against grass turf.
+Drag the plant in the preview to set that stage's X/Y offset, or enter tile
+offsets numerically. Arrow keys nudge by 0.01 tile (Shift: 0.1); Escape cancels
+a drag. Offsets move only the artwork, never the planted tile, collision,
+interaction target, or native tree sorting anchor.
+
+The Shared Art Library screen reads the framework-owned
+`BepInEx/shared/ArtLibrary` catalog. Item Loader and Growables use the same
+Modding Tools API; the library itself does not depend on Item Loader. Choose
+one view from an entry (including four-view item art), or add the current
+custom stage image/render to the library. Chosen art is copied into the pack
+under a content-addressed filename, so recipients need neither the library
+nor a source GLB. Imports never overwrite another plant's same-named image.
+
+Normal Close/Escape prompts to Save, Discard, or Cancel when edits are dirty.
+Save validates native sprite/anchor names, harvest IDs, and image decoding.
+Host teardown still releases the editor immediately; it does not silently save.
 
 Open `Modding Tools` on Silverpine's main menu and choose `Growables Editor`.
 The editor lists the enabled items registered by Custom Item Loader. Create
@@ -69,7 +116,7 @@ selection controls. Larger catalogs open a searchable selection screen:
 - The artwork picker lists the native prefab sprite catalog, pack PNG/JPG/JPEG
   images, and GLBs from CIL's shared authoring-model library. `Import Image /
   GLB` copies images into the pack and imports GLBs into
-  `CustomItemLoaderModels` with readable hash-suffixed filenames. GLB stages expose
+  `BepInEx/shared/ArtLibrary/models` with readable hash-suffixed filenames. GLB stages expose
   rotation, zoom, resolution, and a one-direction preview; they do not require
   front/back/left/right variants. The preview places the plant over
   Silverpine's native one-tile grass turf at its configured world size.
@@ -150,12 +197,15 @@ Custom Item Loader ignores the behavior itself but preserves the `growable`
 block when its item editor saves the pack. Use the dedicated Growables Editor
 for normal editing; direct JSON remains supported.
 
-Do not clone `Bag of Turnip Seeds`, the other native seed bags, or the native
-saplings for a custom seed item. Those templates already contain Silverpine's
-fixed `ItemComponent_Seeds`; combining it with the add-on component would
-trigger two planting behaviors. The Growables Editor labels these items,
-disables `Add Growable Behavior`, and refuses to save an attached growable.
-Runtime registration retains the same check as a second line of defense.
+Use a separate seed item without another use behavior. Native seed bags,
+saplings, edible items, potions, and other components overriding `OnUse`
+conflict: Silverpine calls every component's use behavior. Sticky items are
+also incompatible because the game blocks their use entirely. The editor
+labels incompatible items, disables attachment, and refuses to save attached
+growable behavior; runtime registration independently checks compatibility.
+Passive components and the existing Growables seed component are allowed.
+Harvest outputs can still be normal edible fruit; this restriction applies
+only to the item planted. Use a component-free clone when reusing seed art.
 
 ## Growth stages and art
 
@@ -169,7 +219,7 @@ art source:
 - `image`: PNG, JPG, or JPEG path relative to the item-pack JSON. The path
   cannot leave the pack directory.
 - `model`: Relative GLB reference in CIL's shared
-  `BepInEx/config/CustomItemLoaderModels` authoring library. Custom Item Loader
+  `BepInEx/shared/ArtLibrary/models` authoring library. Custom Item Loader
   renders one transparent, tightly cropped sprite from `rotation`, `zoom`, and
   `resolution`. The deterministic PNG/key pair is cached inside the pack's
   `.cache` folder and reused until the model or render settings change. Legacy
@@ -186,9 +236,18 @@ sprite_nature_sapling_oak
 sprite_nature_sapling_pine
 ```
 
-Base-game art retains its native pivot and pixels-per-unit. Custom image and
-GLB art default to 32 pixels per unit and a centered `(0.5, 0.5)` pivot; override
-`pixelsPerUnit`, `pivotX`, or `pivotY` on that stage when needed.
+Base-game art retains its native pivot and pixels-per-unit. Selecting native
+art in the editor also copies those values into the stage, so a later imported
+image starts from the same planted anchor. Custom pivots, including `(0.5, 0.5)`,
+are always honored. For edited native art such as berried Juniper, explicitly
+choose **Match native sprite** and select its native sprite (`anchorSprite` in
+JSON). This copies that sprite's planted anchor in world units without relying
+on a preceding stage or an asynchronous GLB fallback. GLBs remain centered by
+default. Each stage accepts `offsetX` and `offsetY` in tiles (default 0, finite
+values from -100 to 100); offsets remain constant when stage scale changes.
+All generated growables use Silverpine's native oak-tree sorting layer, depth,
+and Y-sort offset so larger stages overlap map tiles the same way native trees
+do. Override `pixelsPerUnit`, `pivotX`, or `pivotY` on a stage when needed.
 
 GLB-specific stage fields are `rotation` (`[x, y, z]`, default
 `[20, 135, 0]`), `zoom` (default `1`), and `resolution` (default `512`). Unlike
@@ -200,10 +259,18 @@ distributable cache. A released growable pack may omit the authoring GLB as long
 as its `.cache` PNG remains present; cache-only consumers load that PNG exactly
 as Custom Item Loader does for ordinary GLB items.
 
-Growable stage caches follow CIL's deterministic naming convention:
+The editor assigns a stable `cacheId` to each stage. Its CIL cache suffix uses
+that ID and a render-settings fingerprint, not its current list position.
+Reordering/removing stages therefore cannot swap cache-only sprites, and an
+unsaved preview with different settings cannot overwrite a saved stage's art.
+Old index-based caches remain readable; opening the editor copies them to new
+identities without deleting the originals. IDs are written on Save. New saves
+also record stage IDs to retain stage identity after subsequent reordering.
+
+Caches use CIL 3's collision-safe filenames:
 
 ```text
-<pack folder>/.cache/<pack-id>__<item-id>__growable_stage_<index>.png
+<pack folder>/.cache/v2-<full-identity-hash>.png
 ```
 
 Every stage also accepts `scale` from `0.1` to `10` (default `1`). This is a
@@ -222,7 +289,8 @@ lasts before advancing. The mature final stage does not need a duration.
 | `clock` | `RealTimeHours` | `RealTimeHours` or `GameTurns`; controls the unit used by stage durations. |
 | `playerPropertyOnly` | `true` | Requires the player's current tile to pass Silverpine's owned-property check. |
 | `allowRoofed` | `false` | Allows planting beneath a roof tile. |
-| `growsInWinter` | `false` | When false, active growth pauses in winter. |
+| `growthSeasons` | Legacy winter setting | Array of `Spring`, `Summer`, `Autumn`, `Winter`; at least one. Controls initial growth and regrowth. Overrides `growsInWinter` when present. |
+| `growsInWinter` | `false` | Legacy fallback when `growthSeasons` is omitted/null: false selects Spring/Summer/Autumn; true selects all four seasons. |
 | `blocksMovement` | `false` | Adds an impassable turf collider to the plant. |
 | `replaceExistingPlants` | `true` | Removes an existing plant/herb/crop on the planting tile. |
 | `interactionTurns` | `5` | Turns spent planting, destroying, or harvesting. |
@@ -235,8 +303,82 @@ lasts before advancing. The mature final stage does not need a duration.
 
 For turn-based growth, each duration is a processed game-turn count. For
 real-time growth, durations are hours and elapsed time while the game is
-closed is applied when the save is loaded. If the plant is loaded during
-winter and `growsInWinter` is false, that offline interval is not applied.
+closed is applied after the saved world finishes loading. If its restored
+local season is not selected, that offline interval is discarded (not banked
+for a later season); existing progress is preserved. Seasons follow
+Silverpine's in-game calendar and native local overrides: dungeon tiles use
+Summer and high mountains use Winter. They do not follow the computer's
+calendar while the game is closed.
+
+For example, `"growthSeasons": ["Spring", "Summer"]` permits growth and
+regrowth only during those two local seasons. Omit the field to retain an
+older pack's winter behavior. Case-insensitive names are accepted; unknown
+names, null entries, and empty arrays are rejected when saving/registering.
+
+### 1.7.1 comprehensive source audit
+
+Reviewed every production source file and the relevant native planting,
+harvest, inventory, serialization, and turn-event paths, plus CIL and Modding
+Tools integration. This audit includes the following corrections:
+
+- Harvest preparation finishes before granting any items. Reentrant inventory
+  callbacks cannot repeat a harvest; callback exceptions after insertion do
+  not duplicate ground loot. Missing outputs preserve harvest readiness,
+  full inventories receive ground overflow, and cosmetic failures do not
+  restore a consumed harvest.
+- Planting rechecks seed ownership, player position, property permission, and
+  roofing at completion. Cancellation and repeated/stale callbacks cannot
+  plant again or unlock a newer interaction. Allocation failure preserves
+  the seed and occurs before removing existing plants.
+- Malformed saved entries fail safely without replacing their JSON. Invalid
+  numeric input blocks Save instead of silently saving an older value; small
+  floats retain their precision. External growable edits are detected before
+  saving. Copying stages preserves unknown extension fields.
+- Cache-only GLB validation now decodes cached art. Migration can recover an
+  interrupted key/PNG copy without replacing unrelated art. Stage IDs are
+  case-insensitive, model references normalize consistently, and unrenderable
+  offset geometry is rejected before Unity sprite creation.
+- Failed registrations release their owned templates and art. Ripe plants
+  detach from turn events and resubscribe for regrowth. Quick-saving before
+  the first world update no longer loses pending offline progress.
+- Searchable pickers cache filtered results and display 64 entries per page.
+  Structural editor transitions end the current IMGUI pass; closing the
+  editor invalidates pending previews. Seed compatibility is cached for UI
+  drawing and independently rechecked on Save.
+
+Validation: Release build with zero warnings/errors; 143 automated checks,
+including production plant/seed components in a simulated game host, season
+and timing logic, editor validation, cache migration, shared art, and compiled
+API references against the installed CIL/Modding Tools DLLs. No `OnDestroy`
+cleanup was added. This update does not require replacing either dependency.
+
+This is a comprehensive source audit, not a guarantee of zero defects. Live
+Unity rendering, wall layering, IMGUI interaction, actual save/load dispatch,
+asynchronous GLB rendering, and in-game frame-time profiling still need the
+manual checks in `Tests/README.md`. Arbitrary failures inside other mods or
+the native ground-loot system are not covered by the simulated inventory tests.
+
+### 1.7.0 fixes and performance
+
+- Offline growth waits for the saved season and local world data, rather
+  than using the previous world's season during deserialization.
+- Timers accumulate in double precision so multi-day stages do not stop
+  accepting small frame increments. The existing float save field is kept
+  for compatibility; only saving rounds progress to its older precision.
+- Disabled plants detach from their original turn-event publisher using
+  `OnDisable`, with resubscription on enable; no `OnDestroy` dependency.
+- Zero-chance harvest outputs cannot drop on a zero random sample.
+- Growth reuses resolved definitions, source images share decoded textures,
+  and initial registration waits for CIL's completed item snapshot.
+- Preview invalidation uses allocation-free value snapshots instead of
+  per-event JSON serialization. Art-library search results are cached until
+  the query or catalog changes.
+
+Run `dotnet run --project Tests/RegressionChecks.csproj -c Release` for
+definition, cache, placement, season, timing, and simulated component tests.
+The test host exercises the production plant component with minimal game
+stubs; native rendering, Unity callback dispatch, and live frame-time profiling
+still require an in-game check.
 
 ### Perennial example
 

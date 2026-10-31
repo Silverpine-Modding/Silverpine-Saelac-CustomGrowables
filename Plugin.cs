@@ -13,16 +13,16 @@ namespace SilverpineMods.CustomGrowables;
 [BepInPlugin(PluginGuid, PluginName, PluginVersion)]
 [BepInDependency(
     "renegadex.silverpine.customitemloader",
-    "2.9.0")]
+    "3.0.0")]
 [BepInDependency(
     Silverpine.ModdingTools.Plugin.PluginGuid,
-    BepInDependency.DependencyFlags.HardDependency)]
+    "1.13.0")]
 public sealed class Plugin : BaseUnityPlugin
 {
     public const string PluginGuid =
         "renegadex.silverpine.customgrowables";
     public const string PluginName = "Custom Growables";
-    public const string PluginVersion = "1.5.0";
+    public const string PluginVersion = "1.7.3";
 
     internal static ManualLogSource Log { get; private set; } = null!;
 
@@ -38,17 +38,18 @@ public sealed class Plugin : BaseUnityPlugin
         Logger.LogInfo(
             "Registered Growables Editor with the Modding Tools main menu.");
         CustomItemApi.ItemRegistered += OnItemRegistered;
-        GrowableRegistry.RegisterAll(CustomItemApi.GetRegisteredItems());
-        Logger.LogInfo(
-            $"Loaded {PluginName} {PluginVersion}; registered " +
-            $"{GrowableRegistry.Count} growable" +
-            (GrowableRegistry.Count == 1 ? "." : "s."));
+        CustomItemApi.WhenReady(items =>
+        {
+            GrowableRegistry.RegisterAll(items);
+            Logger.LogInfo($"{PluginName} {PluginVersion}: registered {GrowableRegistry.Count} growables.");
+        });
     }
 
     private static void OnItemRegistered(
         object? sender,
         CustomItemRegisteredEventArgs arguments)
     {
+        if (!CustomItemApi.IsRegistrationComplete) return;
         // Re-read the stable snapshot so a growable skipped only because one
         // of its referenced items was deferred can succeed on this pass.
         GrowableRegistry.RegisterAll(CustomItemApi.GetRegisteredItems());

@@ -22,6 +22,8 @@ internal static class GrowableRegistry
     private static readonly Dictionary<string, Sprite> CustomSprites =
         new(StringComparer.OrdinalIgnoreCase);
     private static Dictionary<string, Sprite>? baseGameSprites;
+    private static GameObject? nativeTreeRenderTemplate;
+    private static bool warnedMissingTreeRenderTemplate;
 
     internal static int Count => ById.Count;
 
@@ -31,6 +33,32 @@ internal static class GrowableRegistry
         return baseGameSprites.Keys
             .OrderBy(value => value, StringComparer.OrdinalIgnoreCase)
             .ToArray();
+    }
+
+    internal static bool TryGetBaseGameSpriteSettings(
+        string nameOrPath,
+        out float pixelsPerUnit,
+        out Vector2 normalizedPivot)
+    {
+        try
+        {
+            Sprite sprite = ResolveBaseGameSprite(nameOrPath);
+            pixelsPerUnit = sprite.pixelsPerUnit;
+            normalizedPivot = new Vector2(
+                sprite.rect.width <= 0f
+                    ? 0.5f
+                    : sprite.pivot.x / sprite.rect.width,
+                sprite.rect.height <= 0f
+                    ? 0.5f
+                    : sprite.pivot.y / sprite.rect.height);
+            return true;
+        }
+        catch
+        {
+            pixelsPerUnit = 32f;
+            normalizedPivot = new Vector2(0.5f, 0.5f);
+            return false;
+        }
     }
 
     internal static void RegisterAll(IReadOnlyList<CustomItemInfo> items)
@@ -86,8 +114,22 @@ internal static class GrowableRegistry
             position.ToVector3(definition.Template.transform.position.z),
             definition.Template.transform.rotation);
         instance.hideFlags = HideFlags.None;
-        if (!instance.activeSelf)
-            instance.SetActive(true);
+        try
+        {
+            // Allocate before removing existing plants. This inactive instance
+            // has not registered with Turfs yet.
+            if (definition.replaceExistingPlants)
+            {
+                foreach (GameObject existing in Turfs.GetTurfGameObjects(position))
+                {
+                    CustomGrowable? growable = existing.GetComponent<CustomGrowable>();
+                    if (growable != null) growable.PrepareForRemoval();
+                }
+                PlayerAbility_Construct.DestroyPlantAtPosition(position);
+            }
+            if (!instance.activeSelf) instance.SetActive(true);
+        }
+        catch { UnityEngine.Object.Destroy(instance); throw; }
         return instance;
     }
 
@@ -104,11 +146,9 @@ internal static class GrowableRegistry
             throw new InvalidDataException(
                 "The growable extension is not a JSON object.");
         string qualifiedId = itemInfo.QualifiedId;
-        if (itemInfo.Template.TryGetItemComponent<ItemComponent_Seeds>(out _))
-            throw new InvalidDataException(
-                "A custom growable seed cannot clone a native seed or " +
-                "sapling item because that would activate both planting " +
-                "behaviors. Use a component-free clone or no clone.");
+        string? seedConflict = SeedCompatibility.FindConflict(itemInfo.Template);
+        if (seedConflict != null)
+            throw new InvalidDataException(SeedCompatibility.Explain(seedConflict));
 
         if (string.IsNullOrWhiteSpace(definition.visibleName))
             definition.visibleName = DeriveVisibleName(itemInfo.DisplayName);
@@ -117,13 +157,14 @@ internal static class GrowableRegistry
         definition.PrefabName = CreatePrefabName(qualifiedId);
 
         Plugin.Log.LogInfo($"Preparing growable '{qualifiedId}'.");
-        List<int> pendingGlbStages = ResolveSprites(
-            definition,
-            itemInfo.GetSprite());
         ValidateHarvestItems(definition);
-        definition.Template = CreateTemplate(definition);
-        SerializablePrefabRegistration registration =
-            SerializablePrefabs.Register(
+        SerializablePrefabRegistration? registration = null;
+        List<int> pendingGlbStages;
+        try
+        {
+            pendingGlbStages = ResolveSprites(definition, itemInfo.GetSprite());
+            definition.Template = CreateTemplate(definition);
+            registration = SerializablePrefabs.Register(
                 Plugin.PluginGuid,
                 definition.PrefabName,
                 definition.Template,
@@ -133,9 +174,7 @@ internal static class GrowableRegistry
                     OnInstanceRestored = RestoreInstance
                 });
 
-        ById.Add(qualifiedId, definition);
-        try
-        {
+            ById.Add(qualifiedId, definition);
             CustomItemApi.AddTemplateComponent(
                 Plugin.PluginGuid,
                 qualifiedId,
@@ -144,7 +183,10 @@ internal static class GrowableRegistry
         catch
         {
             ById.Remove(qualifiedId);
-            registration.Unregister(destroyTemplate: true);
+            if (registration != null) registration.Unregister(destroyTemplate: true);
+            else if (definition.Template != null) UnityEngine.Object.Destroy(definition.Template);
+            foreach (Sprite sprite in definition.OwnedSprites) UnityEngine.Object.Destroy(sprite);
+            foreach (Texture2D texture in definition.OwnedTextures) UnityEngine.Object.Destroy(texture);
             throw;
         }
 
@@ -165,14 +207,15 @@ internal static class GrowableRegistry
             GrowableStageDefinition stage = definition.stages[index];
             if (!string.IsNullOrWhiteSpace(stage.sprite))
             {
-                stage.RuntimeSprite = ResolveBaseGameSprite(stage.sprite!);
+                stage.RuntimeSprite = CreateStageVisual(ResolveBaseGameSprite(stage.sprite!), stage, definition.scale);
+                definition.OwnedSprites.Add(stage.RuntimeSprite);
             }
             else if (!string.IsNullOrWhiteSpace(stage.image))
             {
-                stage.RuntimeSprite = LoadCustomSprite(
+                stage.RuntimeSprite = CreateStageVisual(LoadCustomSprite(
                     stage.image!,
-                    definition.QualifiedId + ":stage:" + index,
-                    stage);
+                    definition.QualifiedId + ":stage:" + index), stage, definition.scale);
+                definition.OwnedSprites.Add(stage.RuntimeSprite);
             }
             else if (TryLoadGlbStageCache(
                          definition,
@@ -221,10 +264,10 @@ internal static class GrowableRegistry
                     stage.zoom,
                     stage.resolution,
                     definition.QualifiedId + ":stage:" + index + ":glb-cache",
-                    GrowableDefinition.GetStageCacheSuffix(index),
+                    stage.CacheSuffix(index),
                     out Sprite cached))
                 return false;
-            sprite = ApplyStageSpriteSettings(cached, stage);
+            sprite = AdjustOwnedGlbSprite(cached, definition, stage);
             return true;
         }
         catch (Exception exception)
@@ -257,8 +300,8 @@ internal static class GrowableRegistry
                     stage.zoom,
                     stage.resolution,
                     spriteName,
-                    GrowableDefinition.GetStageCacheSuffix(index));
-                Sprite adjusted = ApplyStageSpriteSettings(rendered, stage);
+                    stage.CacheSuffix(index));
+                Sprite adjusted = AdjustOwnedGlbSprite(rendered, definition, stage);
                 stage.RuntimeSprite = adjusted;
                 RefreshDefinitionArt(definition, index, adjusted);
                 Plugin.Log.LogInfo(
@@ -275,19 +318,75 @@ internal static class GrowableRegistry
         }
     }
 
-    private static Sprite ApplyStageSpriteSettings(
-        Sprite rendered,
-        GrowableStageDefinition stage)
+    internal static Sprite CreateStageVisual(Sprite source, GrowableStageDefinition stage, float baseScale)
     {
-        Texture2D texture = rendered.texture;
+        bool native = !string.IsNullOrWhiteSpace(stage.sprite);
+        float ppu = native ? source.pixelsPerUnit : stage.pixelsPerUnit;
+        Vector2 pixelPivot = native ? source.pivot : new Vector2(stage.pivotX * source.rect.width, stage.pivotY * source.rect.height);
+        // Matching native art is explicit and independent of adjacent stages or asynchronous GLB fallbacks.
+        if (!native && !string.IsNullOrWhiteSpace(stage.anchorSprite))
+        {
+            Sprite anchor = ResolveBaseGameSprite(stage.anchorSprite!);
+            pixelPivot = anchor.pivot / anchor.pixelsPerUnit * ppu;
+        }
+        float scale = baseScale * stage.scale;
+        float width = source.rect.width / ppu * scale, height = source.rect.height / ppu * scale;
+        if (!StageArtIdentity.Finite(width) || !StageArtIdentity.Finite(height) || width <= 0 || height <= 0)
+            throw new InvalidDataException("Stage scale/PPU produces an unrenderable world size.");
+        Vector2 pivot = new(
+            StageArtIdentity.ShiftPivot(pixelPivot.x, source.rect.width, ppu, scale, stage.offsetX),
+            StageArtIdentity.ShiftPivot(pixelPivot.y, source.rect.height, ppu, scale, stage.offsetY));
         Sprite adjusted = Sprite.Create(
-            texture,
-            new Rect(0, 0, texture.width, texture.height),
-            new Vector2(stage.pivotX, stage.pivotY),
-            stage.pixelsPerUnit);
-        adjusted.name = rendered.name;
-        UnityEngine.Object.Destroy(rendered);
+            source.texture, source.rect, pivot, ppu, 0, SpriteMeshType.FullRect);
+        adjusted.name = source.name;
         return adjusted;
+    }
+
+    private static Sprite AdjustOwnedGlbSprite(Sprite source, GrowableDefinition definition, GrowableStageDefinition stage)
+    {
+        try
+        {
+            Sprite adjusted = CreateStageVisual(source, stage, definition.scale);
+            definition.OwnedSprites.Add(adjusted);
+            definition.OwnedTextures.Add(source.texture);
+            return adjusted;
+        }
+        catch { UnityEngine.Object.Destroy(source.texture); throw; }
+        finally { UnityEngine.Object.Destroy(source); }
+    }
+
+    internal static void ValidateReferences(GrowableDefinition definition)
+    {
+        ValidateHarvestItems(definition);
+        foreach (GrowableStageDefinition stage in definition.stages!)
+        {
+            if (!string.IsNullOrWhiteSpace(stage.sprite)) ResolveBaseGameSprite(stage.sprite!);
+            if (!string.IsNullOrWhiteSpace(stage.anchorSprite)) ResolveBaseGameSprite(stage.anchorSprite!);
+            if (!string.IsNullOrWhiteSpace(stage.image))
+            {
+                Texture2D texture = new(2, 2);
+                try
+                {
+                    if (!texture.LoadImage(File.ReadAllBytes(stage.image!), false))
+                        throw new InvalidDataException("Cannot decode stage image: " + stage.image);
+                }
+                finally { UnityEngine.Object.Destroy(texture); }
+            }
+            else if (!string.IsNullOrWhiteSpace(stage.model))
+            {
+                string source = CustomItemApi.ResolveGlbModelSourcePath(definition.PackDirectory, stage.model!, false);
+                int index = definition.stages.IndexOf(stage);
+                if (CustomItemApi.TryLoadCachedGlbSprite(definition.PackDirectory, definition.PackId, definition.ItemId,
+                    stage.model!, stage.ModelRotation, stage.zoom, stage.resolution, "growable-validation",
+                    stage.CacheSuffix(index), out Sprite cached))
+                {
+                    UnityEngine.Object.Destroy(cached.texture);
+                    UnityEngine.Object.Destroy(cached);
+                }
+                else if (!File.Exists(source))
+                    throw new InvalidDataException($"Stage {index} has no usable cached GLB sprite. Restore the model and render the stage before saving.");
+            }
+        }
     }
 
     private static void RefreshDefinitionArt(
@@ -307,7 +406,7 @@ internal static class GrowableRegistry
             growable.RefreshArt(definition.QualifiedId);
     }
 
-    private static Sprite ResolveBaseGameSprite(string nameOrPath)
+    internal static Sprite ResolveBaseGameSprite(string nameOrPath)
     {
         if (nameOrPath.Contains('/'))
         {
@@ -332,6 +431,7 @@ internal static class GrowableRegistry
         foreach (SpriteRenderer renderer in
                  Resources.FindObjectsOfTypeAll<SpriteRenderer>())
         {
+            if (renderer == null || renderer.GetComponent<CustomGrowable>() != null) continue;
             Sprite? sprite = renderer?.sprite;
             if (sprite != null && !string.IsNullOrWhiteSpace(sprite.name))
                 result.TryAdd(sprite.name, sprite);
@@ -356,9 +456,11 @@ internal static class GrowableRegistry
 
     private static Sprite LoadCustomSprite(
         string path,
-        string spriteName,
-        GrowableStageDefinition stage)
+        string spriteName)
     {
+        // Stage geometry is applied separately; one source texture can serve every
+        // stage/pivot/offset using this image. Check before file I/O or decoding.
+        if (CustomSprites.TryGetValue(path, out Sprite cached)) return cached;
         string extension = Path.GetExtension(path);
         if (!extension.Equals(".png", StringComparison.OrdinalIgnoreCase) &&
             !extension.Equals(".jpg", StringComparison.OrdinalIgnoreCase) &&
@@ -367,28 +469,24 @@ internal static class GrowableRegistry
                 $"Unsupported growable image format '{extension}'. Use PNG, " +
                 "JPG, or JPEG.");
 
-        string cacheKey = path + "|" + stage.pixelsPerUnit + "|" +
-            stage.pivotX + "|" + stage.pivotY;
-        if (CustomSprites.TryGetValue(cacheKey, out Sprite cached))
-            return cached;
-
         Texture2D texture = new(2, 2, TextureFormat.ARGB32, false);
-        if (!texture.LoadImage(File.ReadAllBytes(path), false))
+        try
+        {
+            if (!texture.LoadImage(File.ReadAllBytes(path), false))
+                throw new InvalidDataException("Unity could not decode growable image: " + path);
+            texture.name = spriteName;
+            texture.filterMode = FilterMode.Point;
+            Sprite sprite = Sprite.Create(texture,
+                new Rect(0, 0, texture.width, texture.height), new Vector2(.5f, .5f), 32f);
+            sprite.name = spriteName;
+            CustomSprites.Add(path, sprite);
+            return sprite;
+        }
+        catch
         {
             UnityEngine.Object.Destroy(texture);
-            throw new InvalidDataException(
-                "Unity could not decode growable image: " + path);
+            throw;
         }
-        texture.name = spriteName;
-        texture.filterMode = FilterMode.Point;
-        Sprite sprite = Sprite.Create(
-            texture,
-            new Rect(0, 0, texture.width, texture.height),
-            new Vector2(stage.pivotX, stage.pivotY),
-            stage.pixelsPerUnit);
-        sprite.name = spriteName;
-        CustomSprites.Add(cacheKey, sprite);
-        return sprite;
     }
 
     private static void ValidateHarvestItems(GrowableDefinition definition)
@@ -403,24 +501,70 @@ internal static class GrowableRegistry
     private static GameObject CreateTemplate(GrowableDefinition definition)
     {
         GameObject template = new(definition.PrefabName);
-        template.SetActive(false);
-        template.transform.localScale = Vector3.one * definition.scale *
-            definition.stages![0].scale;
-
-        SpriteRenderer renderer = template.AddComponent<SpriteRenderer>();
-        renderer.sprite = definition.stages![0].RuntimeSprite;
-
-        template.AddComponent<TurfRegistrar>();
-        if (definition.blocksMovement)
+        try
         {
-            TurfCollider collider = template.AddComponent<TurfCollider>();
-            collider.passable = false;
-            collider.abyss = false;
+            template.SetActive(false);
+            template.transform.localScale = Vector3.one * definition.scale * definition.stages![0].scale;
+
+            SpriteRenderer renderer = template.AddComponent<SpriteRenderer>();
+            renderer.sprite = definition.stages![0].RuntimeSprite;
+
+            template.AddComponent<TurfRegistrar>();
+            if (definition.blocksMovement)
+            {
+                TurfCollider collider = template.AddComponent<TurfCollider>();
+                collider.passable = false;
+                collider.abyss = false;
+            }
+            CustomGrowable growable = template.AddComponent<CustomGrowable>();
+            growable.Configure(definition.QualifiedId);
+            YSorter sorter = template.AddComponent<YSorter>();
+            ApplyNativeTreeRendering(template, renderer, sorter);
+            return template;
         }
-        CustomGrowable growable = template.AddComponent<CustomGrowable>();
-        growable.Configure(definition.QualifiedId);
-        template.AddComponent<YSorter>();
-        return template;
+        catch { UnityEngine.Object.Destroy(template); throw; }
+    }
+
+    private static void ApplyNativeTreeRendering(
+        GameObject template,
+        SpriteRenderer renderer,
+        YSorter sorter)
+    {
+        nativeTreeRenderTemplate ??=
+            Resources.Load<GameObject>("prefabs/prefab_tree_oak");
+        nativeTreeRenderTemplate ??=
+            Resources.FindObjectsOfTypeAll<GameObject>().FirstOrDefault(
+                candidate =>
+                    candidate != null &&
+                    candidate.name.Equals(
+                        "prefab_tree_oak",
+                        StringComparison.OrdinalIgnoreCase) &&
+                    candidate.GetComponent<SpriteRenderer>() != null &&
+                    candidate.GetComponent<YSorter>() != null);
+
+        if (nativeTreeRenderTemplate == null)
+        {
+            if (!warnedMissingTreeRenderTemplate)
+            {
+                warnedMissingTreeRenderTemplate = true;
+                Plugin.Log.LogWarning(
+                    "Could not resolve Silverpine's oak tree render style; " +
+                    "growables will use Unity's default sorting layer.");
+            }
+            return;
+        }
+
+        SpriteRenderer? treeRenderer =
+            nativeTreeRenderTemplate.GetComponent<SpriteRenderer>();
+        YSorter? treeSorter = nativeTreeRenderTemplate.GetComponent<YSorter>();
+        if (treeRenderer == null || treeSorter == null)
+            return;
+
+        renderer.sortingLayerID = treeRenderer.sortingLayerID;
+        sorter.offset = treeSorter.offset;
+        Vector3 position = template.transform.position;
+        position.z = nativeTreeRenderTemplate.transform.position.z;
+        template.transform.position = position;
     }
 
     private static void RestoreInstance(GameObject instance)
