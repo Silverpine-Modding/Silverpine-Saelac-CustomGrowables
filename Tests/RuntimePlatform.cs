@@ -6,15 +6,22 @@ namespace UnityEngine
 {
     public sealed class SerializeField : Attribute { }
     public enum HideFlags { None }
-    public class Object { public static void Destroy(object value) { } }
+    public class Object { public static void Destroy(object value) { if (value is GameObject gameObject) gameObject.Destroyed = true; } }
     public class MonoBehaviour
     {
         public GameObject gameObject = new();
         public Transform transform => gameObject.transform;
         public bool isActiveAndEnabled = true;
-        public T GetComponent<T>() where T : new() => new();
+        public T GetComponent<T>() where T : new() => gameObject.GetComponent<T>();
     }
-    public class Transform { public Vector3 position, localScale; }
+    public class Transform
+    {
+        public Vector3 position, localScale = Vector3.one;
+        public Transform? parent;
+        public Vector3 lossyScale => parent == null ? localScale : new(
+            parent.lossyScale.x * localScale.x, parent.lossyScale.y * localScale.y, parent.lossyScale.z * localScale.z);
+        public void SetParent(Transform value, bool worldPositionStays) => parent = value;
+    }
     public struct Vector2Int
     {
         public int x, y;
@@ -27,7 +34,14 @@ namespace UnityEngine
     public static class Time { public static float fixedUnscaledDeltaTime = .02f; }
     public static class Random
     {
-        public static float value;
+        private static float sample;
+        public static readonly Queue<float> Samples = new();
+        public static int Reads;
+        public static float value
+        {
+            get { Reads++; return Samples.Count > 0 ? Samples.Dequeue() : sample; }
+            set { sample = value; Samples.Clear(); Reads = 0; }
+        }
         public static int Range(int minimum, int maximum) => minimum;
     }
 }
@@ -36,6 +50,10 @@ public interface ISerializableMonoBehavior { }
 public interface IInteractionHandler { }
 public interface INPCVisibleObject { }
 public interface INPCInteractable { }
+public class LightFlickerer { }
+public enum Quality { Normal, Quality, Superior, Exceptional, Pristine, Blessed, Legendary }
+public interface IQualityItemComponent { Quality Quality { get; set; } }
+public class QualityTestComponent : ItemComponent, IQualityItemComponent { public Quality Quality { get; set; } }
 public class YSorter { public void SetSortingOrder() { } }
 public static class SerializationManager { public static bool loadingSave; }
 public enum Season { Spring, Summer, Autumn, Winter }
@@ -65,6 +83,8 @@ public class Item
 {
     public readonly List<ItemComponent> Components = new();
     public List<T> GetItemComponents<T>() => Components.OfType<T>().ToList();
+    public bool TryGetItemComponent<T>(out T result) { result = Components.OfType<T>().FirstOrDefault()!; return result != null; }
+    public Item SetQuality(Quality quality) { foreach (var component in Components.OfType<IQualityItemComponent>()) component.Quality = quality; return this; }
     public Inventory inventory = null!;
     public void RemoveItemFromInventory() => inventory.Items.Remove(this);
 }
@@ -187,12 +207,14 @@ namespace SilverpineMods.CustomGrowables
         internal static int Lookups;
         internal static int Planted;
         internal static bool FailPlant;
-        internal static GameObject Plant(GrowableDefinition definition, Vector2Int position)
-        { if (FailPlant) throw new Exception("Plant allocation failed"); Planted++; return new(); }
+        internal static Quality LastPlantedQuality;
+        internal static GameObject Plant(GrowableDefinition definition, Vector2Int position, Quality quality = Quality.Normal)
+        { if (FailPlant) throw new Exception("Plant allocation failed"); Planted++; LastPlantedQuality = quality; return new(); }
         internal static bool TryGet(string id, out GrowableDefinition definition)
         { Lookups++; return Definitions.TryGetValue(id, out definition!); }
         internal static string? FailItem;
-        internal static bool TryCreateItem(string id, out Item item) { item = new(); return id != FailItem; }
+        internal static Func<string, Item>? ItemFactory;
+        internal static bool TryCreateItem(string id, out Item item) { item = ItemFactory?.Invoke(id) ?? new(); return id != FailItem; }
     }
     public static class Plugin { public static Logger Log = new(); }
     public class Logger

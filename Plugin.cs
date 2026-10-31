@@ -22,7 +22,7 @@ public sealed class Plugin : BaseUnityPlugin
     public const string PluginGuid =
         "renegadex.silverpine.customgrowables";
     public const string PluginName = "Custom Growables";
-    public const string PluginVersion = "1.7.4";
+    public const string PluginVersion = "1.8.0";
 
     internal static ManualLogSource Log { get; private set; } = null!;
 

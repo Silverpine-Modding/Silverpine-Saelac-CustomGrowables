@@ -10,6 +10,9 @@ Custom Growables supports:
 - Base-game sprites, pack-relative PNG/JPG/JPEG art, or one-direction GLB
   renders at every stage.
 - Per-stage size multipliers layered on the plant's base world scale.
+- Native diffuse world lighting and optional per-stage colored point lights.
+- Seed quality carried into the plant and all quality-capable harvest items.
+- Optional, independently configurable +1 through +6-tier harvest-quality chances.
 - Real-world-hour or processed-game-turn growth.
 - Save/load persistence and offline real-time progress.
 - Per-plant Spring / Summer / Autumn / Winter growth seasons, including regrowth.
@@ -52,6 +55,19 @@ BepInEx/shared/ArtLibrary/models/
 ```
 
 ## In-game Growables Editor
+
+Version 1.8.0 fixes nighttime brightness by sharing the native tree's diffuse
+material. All plant art sources now respond to sunlight and local lights.
+In **Stages & Art → Stage light / glow**, enable a separate light for any
+stage. Morning Dew and Lantern presets provide native starting values; edit
+RGB color, radius, intensity, flicker, and XYZ offsets independently per stage.
+The artwork preview remains unlit and does not simulate the in-world glow.
+Loading an unchanged growable or pressing Discard also leaves the item list
+selectable; internal legacy-cache preparation no longer counts as a user edit.
+Seeds now support Silverpine's native quality interface. The planted seed's
+quality persists through growth, save/load, and repeated harvests. Under
+**Harvest → Chance for higher quality**, optionally assign probabilities for
+each upgrade amount (+1 through +6). See the quality section below.
 
 Version 1.7.4 gives text fields full-width, word-wrapped boxes that grow and
 shrink with their content, including trailing empty lines. Plant names accept
@@ -289,12 +305,85 @@ sprites and imported images as well as rendered GLBs.
 `duration` belongs to the stage containing it and controls how long that stage
 lasts before advancing. The mature final stage does not need a duration.
 
+## Stage lights
+
+The diffuse-material fix applies to every plant sprite, including native art,
+custom images, and cached GLB renders. It does not alter inventory icons or
+bake lighting into cached artwork. FakeAO/ground-shadow overlays are separate
+and are not added by this feature.
+
+Add an optional `light` object to any stage. Omit it, or set `enabled` to
+`false`, for a stage without emitted light. A minimal `"light": {}` uses the
+Morning Dew preset. A fully specified equivalent is:
+
+```json
+"light": {
+  "enabled": true,
+  "color": [1.0, 0.89451975, 0.49411762],
+  "radius": 1.0,
+  "intensity": 1.0,
+  "flicker": false,
+  "offsetX": 0.0,
+  "offsetY": 0.0,
+  "offsetZ": -0.55
+}
+```
+
+The editor also offers Item Loader's Lantern defaults: RGB `[1, 0.68, 0.41]`,
+radius `5`, intensity `2`, with native lantern flicker. RGB values must be
+finite numbers from 0–1; radius is 0.1–50 tiles and intensity is 0–20. Light
+offsets are relative to the planted tile in world units (X right, Y up, Z
+depth), independent of stage/art scale and sprite offsets. X/Y accept -100–100;
+Z accepts -10–10. The native light depth is -0.55.
+
+Stages do not inherit lights from the previous stage. Growth, harvesting,
+regrowth, and save restoration select the current stage's light. Duplicated
+stages get independent copies of their settings. The light is a transient
+child, not an additional saved native component; no `OnDestroy` callback is
+used. Ordinary/non-flickering lights have no new per-frame update loop.
+
+## Seed and harvest quality
+
+Growable seed components implement Silverpine's `IQualityItemComponent`, so
+native quality assignment, stars, and applicable quality-upgrade mechanics
+recognize them. Qualities are Normal, Quality, Superior, Exceptional, Pristine,
+Blessed, and Legendary. Existing seeds and already-planted growables without
+saved quality default to Normal. No automatic random quality is assigned when
+buying or creating a seed.
+
+Planting copies the used seed's quality into that plant instance. It survives
+save/load, stage changes, and perennial harvests. Each harvested item that
+already supports quality receives the plant's quality, including returned
+growable seeds and inventory-overflow drops. Items without native quality
+support are unchanged; they are not given artificial quality components.
+
+An optional per-plant harvest setting can improve individual products:
+
+```json
+"qualityBonusEnabled": true,
+"qualityBonusChances": [0.20, 0.05, 0.01, 0.0, 0.0, 0.0]
+```
+
+The six entries are the probabilities of +1, +2, +3, +4, +5, and +6 quality
+tiers, respectively. This example gives 20% +1, 5% +2, 1% +3, and 74% unchanged.
+The editor displays percentages; JSON uses fractions from 0–1. Values must be
+finite and total no more than 1 (100%). Each quality-capable product gets one
+independent roll; chances are not sequential/compounding rolls. Results cap at
+Legendary. The original plant never changes quality, but improved returned
+seeds can grow higher-quality plants in the next generation.
+
+Bonuses are **off by default**. When enabled without an explicit array, the
+default is 10% +1 tier and 90% unchanged. Six zeroes mean no upgrades. This
+setting affects quality only, not yield counts or harvest drop chances.
+
 ## Growable fields
 
 | Field | Default | Meaning |
 |---|---:|---|
 | `visibleName` | Derived from seed item name | Plant name used in interaction and NPC text. |
 | `clock` | `RealTimeHours` | `RealTimeHours` or `GameTurns`; controls the unit used by stage durations. |
+| `qualityBonusEnabled` | `false` | Enable per-product chances to exceed the plant's inherited quality. |
+| `qualityBonusChances` | `[0.1, 0, 0, 0, 0, 0]` | Probabilities for +1 through +6 quality tiers; total must be at most 1. |
 | `playerPropertyOnly` | `true` | Requires the player's current tile to pass Silverpine's owned-property check. |
 | `allowRoofed` | `false` | Allows planting beneath a roof tile. |
 | `growthSeasons` | Legacy winter setting | Array of `Spring`, `Summer`, `Autumn`, `Winter`; at least one. Controls initial growth and regrowth. Overrides `growsInWinter` when present. |

@@ -6,24 +6,33 @@ using UnityEngine;
 
 namespace SilverpineMods.CustomGrowables;
 
-public sealed class ItemComponent_CustomGrowableSeed : ItemComponent
+public sealed class ItemComponent_CustomGrowableSeed : ItemComponent, IQualityItemComponent
 {
     private string growableId = "";
     private bool planting;
+    private Quality quality;
+
+    public Quality Quality
+    {
+        get => quality;
+        set => quality = GrowableQuality.Normalize(value);
+    }
 
     public ItemComponent_CustomGrowableSeed()
     {
     }
 
-    internal ItemComponent_CustomGrowableSeed(string growableId)
+    internal ItemComponent_CustomGrowableSeed(string growableId, Quality quality = Quality.Normal)
     {
         this.growableId = growableId;
+        Quality = quality;
     }
 
     public override void Serialize(BinaryWriter binaryWriter)
     {
         var storage = new VersionSafeStorage();
         storage.AddToStorage("growableId", growableId);
+        storage.AddToStorage("quality", (int)Quality);
         storage.Serialize(binaryWriter);
     }
 
@@ -32,6 +41,7 @@ public sealed class ItemComponent_CustomGrowableSeed : ItemComponent
         var storage = new VersionSafeStorage();
         storage.Deserialize(binaryReader);
         growableId = storage.GetString("growableId", growableId);
+        Quality = (Quality)storage.GetInt("quality", (int)Quality.Normal);
     }
 
     public override string GetDescriptionSuffix()
@@ -105,7 +115,7 @@ public sealed class ItemComponent_CustomGrowableSeed : ItemComponent
                         player.transform.GetVector2IntPosition() != position || WorldInfoManager.Instance == null) return;
                     if ((definition.playerPropertyOnly && !WorldInfoManager.Instance.IsOnPlayerOwnedPlot(position)) ||
                         (!definition.allowRoofed && TileTags.HasTileTag(position, TileTag.Roofed))) return;
-                    GrowableRegistry.Plant(definition, position);
+                    GrowableRegistry.Plant(definition, position, GrowableQuality.FromItem(seed));
                     seed.RemoveItemFromInventory();
                 }
                 catch (Exception error) { Plugin.Log.LogError("Planting failed: " + error); }

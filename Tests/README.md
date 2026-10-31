@@ -6,6 +6,15 @@ components, timing, seasons, preview snapshots, editor validation,
 seed compatibility, cache migration, and Modding Tools shared-art code.
 Small game/path stubs allow these tests to run outside Unity.
 
+Version 1.8.0 adds production stage-light and harvest-quality checks: presets,
+validation, independent stage copies, scale-independent positioning, lifecycle
+cleanup, growth/regrowth switching, quality persistence, legacy saves, native
+seed planting quality, unsupported outputs, inventory overflow, independent
+upgrade rolls, all +1 through +6-tier/quality combinations, Legendary caps,
+and probability bounds. Binary checks verify native shared-material use,
+unchanged serializable component layout, editor wiring, and quality integration.
+The prior Discard/clean-load regression remains covered.
+
 To additionally check the compiled plugin against installed dependency APIs,
 run these commands from the game directory (build the release first):
 
@@ -79,3 +88,14 @@ references; verify they wrap without widening the panel or overlapping the
 picker/import buttons. Save/reload and check that plant-name line breaks are
 preserved but reference values contain no CR/LF characters. Repeat at 1280×720
 and 1920×1080, scroll through a tall field, then close/reopen the editor.
+
+For 1.8.0, compare native and custom plants at noon/night and near a lantern.
+Enable Morning Dew on only the final stage; grow, harvest, and reload to check
+that its light appears/disappears correctly. Test custom colors, offsets, size
+changes, and flicker. Verify the Stages & Art controls remain readable while
+scrolling at both resolutions; the artwork preview intentionally stays unlit.
+Plant quality seeds, save/reload, and check quality stars on compatible outputs
+and returned seeds. Test zero, partial, and 100% multi-tier bonus distributions,
+including caps at Legendary and a full inventory. Confirm a sum over 100%
+cannot be saved. These live rendering/UI checks have not been performed by
+the headless suite.

@@ -711,6 +711,7 @@ internal sealed partial class GrowableEditorUI : ModToolBehaviour
                     stage.duration = value;
                     MarkDirty();
                 });
+        DrawStageLight(stage, index);
         GUILayout.EndVertical();
 
         if (action == -1)
@@ -730,6 +731,28 @@ internal sealed partial class GrowableEditorUI : ModToolBehaviour
         GUILayout.Label("Harvest results");
         GUILayout.Label(
             "Use a CIL qualified ID (pack:item) or type a base-game item name.");
+        GUILayout.Label("Products that support quality inherit the planted seed's quality.", editorMuted!);
+        DrawToggle("Chance for higher quality", definition.qualityBonusEnabled,
+            value => { Set(ref definition.qualityBonusEnabled, value); GUIUtility.ExitGUI(); });
+        if (definition.qualityBonusEnabled)
+        {
+            for (int tier = 0; tier < GrowableQuality.UpgradeTiers; tier++)
+            {
+                int captured = tier;
+                DrawFloat($"+{tier + 1} tier chance (%)", "harvest.qualityBonus." + tier,
+                    GrowableQuality.BonusChance(definition.qualityBonusChances, tier) * 100f, value =>
+                    {
+                        if (definition.qualityBonusChances == null || definition.qualityBonusChances.Length != GrowableQuality.UpgradeTiers)
+                            definition.qualityBonusChances = Enumerable.Range(0, GrowableQuality.UpgradeTiers)
+                                .Select(index => GrowableQuality.BonusChance(definition.qualityBonusChances, index)).ToArray();
+                        Set(ref definition.qualityBonusChances[captured], value / 100f);
+                    });
+            }
+            float total = GrowableQuality.BonusTotal(definition.qualityBonusChances) * 100f;
+            GUILayout.Label(total <= 100.0001f ? $"Unchanged quality: {Math.Max(0, 100f - total):0.##}%" : "Total chance must not exceed 100%.", editorMuted!);
+            GUILayout.Label("One roll per quality-capable product. Results cap at Legendary; the plant's quality stays unchanged. " +
+                "Returned seeds can also improve.", editorMuted!);
+        }
 
         for (int index = 0; index < definition.harvest.Count; index++)
         {
@@ -1240,6 +1263,9 @@ internal sealed partial class GrowableEditorUI : ModToolBehaviour
                     EnsureStageCacheIdentities();
                 }
             }
+            // Loading (also used by Discard) establishes a clean editing session.
+            // Legacy cache-ID migration is preparation, not an unsaved user edit.
+            dirty = false;
             status = "Loaded " + selectedItem.QualifiedId;
         }
         catch (Exception exception)
@@ -2012,7 +2038,8 @@ internal sealed partial class GrowableEditorUI : ModToolBehaviour
         duration = duration,
         pixelsPerUnit = source.pixelsPerUnit,
         pivotX = source.pivotX,
-        pivotY = source.pivotY
+        pivotY = source.pivotY,
+        light = source.light?.Copy()
         };
         if (source.extensionData != null)
             copy.extensionData = source.extensionData.ToDictionary(pair => pair.Key, pair => pair.Value.DeepClone());

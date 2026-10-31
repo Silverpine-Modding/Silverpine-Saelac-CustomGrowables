@@ -194,6 +194,7 @@ try
     long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
     Check(equal && allocated == 0, "100,000 cached preview/season comparisons allocate zero managed bytes");
     RuntimeChecks.Run(Check, file);
+    LightingQualityChecks.Run(Check, file);
     foreach (string invalid in new[] { "", "-", "abc", "NaN", "Infinity", "1e100" })
         Check(!EditorValidation.TryFloat(invalid, out _), "numeric editor rejects incomplete/non-finite text: " + invalid);
     Check(EditorValidation.TryFloat("0.00001", out float tiny) && tiny == .00001f &&

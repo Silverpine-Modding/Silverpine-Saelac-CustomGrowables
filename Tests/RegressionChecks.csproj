@@ -9,6 +9,9 @@
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
     <Compile Include="..\StageArtIdentity.cs" Link="Production\StageArtIdentity.cs" />
     <Compile Include="..\Definitions.cs" Link="Production\Definitions.cs" />
+    <Compile Include="..\GrowableLightDefinition.cs" Link="Production\GrowableLightDefinition.cs" />
+    <Compile Include="..\StageLight.cs" Link="Production\StageLight.cs" />
+    <Compile Include="..\GrowableQuality.cs" Link="Production\GrowableQuality.cs" />
     <Compile Include="..\GrowthSeasons.cs" Link="Production\GrowthSeasons.cs" />
     <Compile Include="..\GrowthProgress.cs" Link="Production\GrowthProgress.cs" />
     <Compile Include="..\StagePreviewState.cs" Link="Production\StagePreviewState.cs" />

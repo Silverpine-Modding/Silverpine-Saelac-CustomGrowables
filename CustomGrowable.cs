@@ -28,8 +28,12 @@ public sealed class CustomGrowable :
     private ActionQueue? turnPublisher;
     private bool beingRemoved;
     private bool harvesting;
+    private Quality seedQuality;
+    private StageLight? stageLight;
 
     public string InteractionName => "Harvest";
+
+    internal void SetSeedQuality(Quality quality) => seedQuality = GrowableQuality.Normalize(quality);
 
     internal void Configure(string qualifiedId)
     {
@@ -37,6 +41,7 @@ public sealed class CustomGrowable :
         cachedDefinition = null;
         stageIndex = 0;
         stageProgress = 0f;
+        seedQuality = Quality.Normal;
         pendingOfflineSeconds = 0;
         pendingOfflineTimestamp = null;
         beingRemoved = false;
@@ -84,9 +89,13 @@ public sealed class CustomGrowable :
             Advance(definition, Time.fixedUnscaledDeltaTime);
     }
 
-    private void OnEnable() => TrySubscribeToTurns();
+    private void OnEnable() => ApplyStage();
 
-    private void OnDisable() => UnsubscribeFromTurns();
+    private void OnDisable()
+    {
+        UnsubscribeFromTurns();
+        stageLight?.Clear();
+    }
 
     private void UnsubscribeFromTurns()
     {
@@ -162,6 +171,12 @@ public sealed class CustomGrowable :
         SpriteRenderer? renderer = GetComponent<SpriteRenderer>();
         if (renderer != null)
             renderer.sprite = stage.RuntimeSprite;
+        if (!beingRemoved && isActiveAndEnabled && gameObject != definition.Template && stage.light?.enabled == true)
+        {
+            stageLight ??= new StageLight();
+            stageLight.Apply(transform, stage.light);
+        }
+        else stageLight?.Clear();
         YSorter? sorter = GetComponent<YSorter>();
         if (sorter != null && gameObject.activeInHierarchy)
             sorter.SetSortingOrder();
@@ -173,6 +188,7 @@ public sealed class CustomGrowable :
         if (TryGetDefinition(out GrowableDefinition pendingDefinition)) ApplyPendingOfflineGrowth(pendingDefinition);
         var storage = new VersionSafeStorage();
         storage.AddToStorage("growableId", growableId);
+        storage.AddToStorage("seedQuality", (int)seedQuality);
         storage.AddToStorage("stageIndex", stageIndex);
         if (TryGetDefinition(out GrowableDefinition stageDefinition) && stageDefinition.stages != null &&
             stageIndex >= 0 && stageIndex < stageDefinition.stages.Count)
@@ -192,6 +208,7 @@ public sealed class CustomGrowable :
         var storage = new VersionSafeStorage();
         storage.Deserialize(binaryReader);
         growableId = storage.GetString("growableId", growableId);
+        SetSeedQuality((Quality)storage.GetInt("seedQuality", (int)Quality.Normal));
         cachedDefinition = null;
         pendingOfflineSeconds = 0;
         pendingOfflineTimestamp = null;
@@ -237,17 +254,18 @@ public sealed class CustomGrowable :
     {
         if (!TryGetDefinition(out GrowableDefinition definition))
             return "An unknown plant";
+        string quality = seedQuality == Quality.Normal ? "" : $" ({seedQuality} quality)";
         if (definition.IsHarvestReady(stageIndex))
             return definition.perennial
                 ? "A harvest-ready " +
-                    definition.DisplayName.ToLowerInvariant()
-                : "A mature " + definition.DisplayName.ToLowerInvariant();
+                    definition.DisplayName.ToLowerInvariant() + quality
+                : "A mature " + definition.DisplayName.ToLowerInvariant() + quality;
         if (hasMatured)
-            return "A mature " + definition.DisplayName.ToLowerInvariant();
+            return "A mature " + definition.DisplayName.ToLowerInvariant() + quality;
         if (stageIndex == 0)
             return "A " + definition.DisplayName.ToLowerInvariant() +
-                " seedling";
-        return "A growing " + definition.DisplayName.ToLowerInvariant();
+                " seedling" + quality;
+        return "A growing " + definition.DisplayName.ToLowerInvariant() + quality;
     }
 
     public void OnInteract(GameObject sender)
@@ -317,6 +335,7 @@ public sealed class CustomGrowable :
                     {
                         if (!GrowableRegistry.TryCreateItem(output.item!, out Item item))
                             throw new InvalidOperationException("Cannot create harvest item '" + output.item + "'.");
+                        GrowableQuality.ApplyHarvest(item, seedQuality, definition);
                         results.Add(item);
                     }
                 }
@@ -368,7 +387,7 @@ public sealed class CustomGrowable :
         finally { harvesting = false; }
     }
 
-    internal void PrepareForRemoval() { beingRemoved = true; UnsubscribeFromTurns(); }
+    internal void PrepareForRemoval() { beingRemoved = true; UnsubscribeFromTurns(); stageLight?.Clear(); }
 
     private void RemovePlant()
     {

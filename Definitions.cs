@@ -26,6 +26,8 @@ internal sealed class GrowableDefinition
     public int matureStage = -1;
     public int regrowStage = -1;
     public float scale = 1f;
+    public bool qualityBonusEnabled;
+    public float[]? qualityBonusChances;
     public List<GrowableStageDefinition>? stages;
     public List<GrowableHarvestDefinition>? harvest;
 
@@ -121,6 +123,7 @@ internal sealed class GrowableDefinition
                 $"growable.clock must be {nameof(GrowableClock.RealTimeHours)} " +
                 $"or {nameof(GrowableClock.GameTurns)}.");
         Clock = parsed;
+        GrowableQuality.ValidateBonusChances(qualityBonusChances);
         GrowthSeasonMask = GrowthSeasons.Resolve(growthSeasons, growsInWinter);
         if (growthSeasons != null)
             growthSeasons = GrowthSeasons.NamesFor(GrowthSeasonMask);
@@ -190,6 +193,7 @@ internal sealed class GrowableStageDefinition
     public float pixelsPerUnit = 32f;
     public float pivotX = 0.5f;
     public float pivotY = 0.5f;
+    public GrowableLightDefinition? light;
 
     [JsonExtensionData]
     public IDictionary<string, JToken>? extensionData;
@@ -231,6 +235,7 @@ internal sealed class GrowableStageDefinition
             throw new InvalidDataException(
                 $"growable.stages[{index}].pixelsPerUnit must be positive.");
         StageArtIdentity.ValidateOffset(offsetX, offsetY);
+        light?.Validate($"growable.stages[{index}].light");
         if (cacheId != null && (!Guid.TryParseExact(cacheId, "N", out _)))
             throw new InvalidDataException("Stage cache ID must be a 32-character GUID.");
         if (!StageArtIdentity.Finite(pivotX) || !StageArtIdentity.Finite(pivotY) ||

@@ -107,7 +107,8 @@ internal static class GrowableRegistry
 
     internal static GameObject Plant(
         GrowableDefinition definition,
-        Vector2Int position)
+        Vector2Int position,
+        Quality quality = Quality.Normal)
     {
         GameObject instance = UnityEngine.Object.Instantiate(
             definition.Template,
@@ -116,6 +117,7 @@ internal static class GrowableRegistry
         instance.hideFlags = HideFlags.None;
         try
         {
+            instance.GetComponent<CustomGrowable>().SetSeedQuality(quality);
             // Allocate before removing existing plants. This inactive instance
             // has not registered with Turfs yet.
             if (definition.replaceExistingPlants)
@@ -178,7 +180,7 @@ internal static class GrowableRegistry
             CustomItemApi.AddTemplateComponent(
                 Plugin.PluginGuid,
                 qualifiedId,
-                new ItemComponent_CustomGrowableSeed(qualifiedId));
+                new ItemComponent_CustomGrowableSeed(qualifiedId, GrowableQuality.FromItem(itemInfo.Template)));
         }
         catch
         {
@@ -561,6 +563,10 @@ internal static class GrowableRegistry
             return;
 
         renderer.sortingLayerID = treeRenderer.sortingLayerID;
+        // New SpriteRenderers default to unlit. Share the native material so
+        // every art source responds to the sun and nearby point lights.
+        renderer.sharedMaterial = treeRenderer.sharedMaterial;
+        template.layer = nativeTreeRenderTemplate.layer;
         sorter.offset = treeSorter.offset;
         Vector3 position = template.transform.position;
         position.z = nativeTreeRenderTemplate.transform.position.z;
