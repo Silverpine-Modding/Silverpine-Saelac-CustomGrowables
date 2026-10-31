@@ -311,7 +311,8 @@ internal sealed partial class GrowableEditorUI : ModToolBehaviour
         DrawText(
             "Plant name",
             definition!.visibleName ?? "",
-            value => Set(ref definition.visibleName, value));
+            value => Set(ref definition.visibleName, value),
+            allowLineBreaks: true);
         DrawChoice(
             "Growth clock",
             definition.clock ?? Clocks[0],
@@ -522,31 +523,27 @@ internal sealed partial class GrowableEditorUI : ModToolBehaviour
 
         if (artMode == "Base-game sprite")
         {
-            GUILayout.BeginHorizontal();
-            DrawFieldLabel("Sprite asset");
-            string sprite = GUILayout.TextField(stage.sprite ?? "");
-            if (sprite != stage.sprite)
+            DrawText("Sprite asset", stage.sprite ?? "", sprite =>
             {
                 stage.sprite = sprite;
                 stage.artAssetId = null; stage.artOriginalName = null;
                 ApplyBaseGameSpriteSettings(stage);
                 MarkDirty();
-            }
+            });
+            GUILayout.BeginHorizontal();
             if (DrawActionButton("Choose… ▼", 110))
                 OpenArtworkPicker(stage);
             GUILayout.EndHorizontal();
         }
         else if (artMode == "Custom image")
         {
-            GUILayout.BeginHorizontal();
-            DrawFieldLabel("Image");
-            string image = GUILayout.TextField(stage.image ?? "");
-            if (image != stage.image)
+            DrawText("Image", stage.image ?? "", image =>
             {
                 stage.image = image;
                 stage.artAssetId = null; stage.artOriginalName = null;
                 MarkDirty();
-            }
+            });
+            GUILayout.BeginHorizontal();
             if (DrawActionButton("Choose… ▼", 110))
                 OpenArtworkPicker(stage);
             if (DrawActionButton("Import…", 90))
@@ -583,15 +580,13 @@ internal sealed partial class GrowableEditorUI : ModToolBehaviour
         }
         else
         {
-            GUILayout.BeginHorizontal();
-            DrawFieldLabel("GLB model");
-            string model = GUILayout.TextField(stage.model ?? "");
-            if (model != stage.model)
+            DrawText("GLB model", stage.model ?? "", model =>
             {
                 stage.model = model;
                 stage.artAssetId = null; stage.artOriginalName = null;
                 MarkDirty();
-            }
+            });
+            GUILayout.BeginHorizontal();
             if (DrawActionButton("Choose… ▼", 110))
                 OpenArtworkPicker(stage);
             if (DrawActionButton("Import…", 90))
@@ -1635,14 +1630,15 @@ internal sealed partial class GrowableEditorUI : ModToolBehaviour
     private void DrawText(
         string label,
         string value,
-        Action<string> assign)
+        Action<string> assign,
+        bool allowLineBreaks = false)
     {
-        GUILayout.BeginHorizontal();
-        DrawFieldLabel(label);
-        string next = GUILayout.TextField(value ?? "");
+        GUILayout.BeginVertical();
+        GUILayout.Label(label, editorFieldLabel!);
+        string next = DrawWrappedTextInput(value ?? "", allowLineBreaks);
         if (next != value)
             assign(next);
-        GUILayout.EndHorizontal();
+        GUILayout.EndVertical();
     }
 
     private void DrawToggle(

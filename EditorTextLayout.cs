@@ -9,6 +9,17 @@ internal static class EditorTextLayout
     internal const float SidebarWidth = 420f;
     internal const float ItemRowHeight = 76f;
 
+    // A measurement-only glyph reserves a caret line for empty input and
+    // trailing newlines even when a font ignores trailing blank lines.
+    internal static string TextMeasurement(string value) =>
+        value.Length == 0 || value.EndsWith("\n", StringComparison.Ordinal) || value.EndsWith("\r", StringComparison.Ordinal)
+            ? value + "M" : value;
+
+    // Word wrapping must not introduce line breaks into resource identifiers.
+    // Free-form display text keeps explicit line breaks exactly as entered.
+    internal static string EditableText(string value, bool allowLineBreaks) =>
+        allowLineBreaks ? value : value.Replace("\r", "").Replace("\n", "");
+
     // Fit the actual font metrics, not a character-count approximation. Never
     // split surrogate pairs or combining characters when adding the ellipsis.
     internal static string FitSingleLine(string? value, float width, Func<string, float> measure)

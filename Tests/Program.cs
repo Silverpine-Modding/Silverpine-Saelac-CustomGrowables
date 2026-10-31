@@ -29,6 +29,20 @@ foreach (int width in new[] { 160, 240, 320, 380 })
 }
 Check(EditorTextLayout.SidebarWidth >= 420 && EditorTextLayout.ItemRowHeight >= 76, "sidebar reserves room for two separate padded text lines");
 
+Check(EditorTextLayout.TextMeasurement("") == "M", "empty text boxes reserve a caret line");
+Check(EditorTextLayout.TextMeasurement("Apple tree") == "Apple tree", "ordinary text is measured without extra glyphs");
+foreach (string ending in new[] { "\n", "\r", "\r\n", "\n\n" })
+    Check(EditorTextLayout.TextMeasurement("Apple" + ending) == "Apple" + ending + "M",
+        "trailing empty lines are included in text-box measurement: " + JsonConvert.SerializeObject(ending));
+string multilineName = "Apple 🌳\r\nOrchard tree\n";
+Check(EditorTextLayout.EditableText(multilineName, true) == multilineName,
+    "multiline display text preserves explicit breaks and Unicode without measurement placeholders");
+Check(EditorTextLayout.EditableText("pack:\r\napple\n_seed\r", false) == "pack:apple_seed",
+    "wrapped item identifiers cannot store newline characters");
+Check(EditorTextLayout.EditableText("art/Orchard 🌳/apple tree.png", false) == "art/Orchard 🌳/apple tree.png",
+    "wrapped resource paths preserve spaces, slashes, and Unicode");
+Check(EditorTextLayout.EditableText("", true) == "", "empty editable text never gains the measurement glyph");
+
 var seedTemplate = new Item();
 Check(SeedCompatibility.FindConflict(seedTemplate) == null, "component-free items can become seeds");
 seedTemplate.Components.Add(new PassiveSeedTestComponent());
@@ -84,6 +98,11 @@ try
     string file = Path.Combine(folder, "pack.json");
     var definition = Definition(); definition.Validate(file, "pack:seed");
     Check(definition.harvest![0].minimum == 5 && definition.IsHarvestReady(1), "five-apple harvest definition remains valid");
+    definition.visibleName = multilineName;
+    var multilineRestored = JsonConvert.DeserializeObject<GrowableDefinition>(JsonConvert.SerializeObject(definition))!;
+    multilineRestored.Validate(file, "pack:seed");
+    Check(multilineRestored.visibleName == multilineName && multilineRestored.DisplayName.Contains("\r\n"),
+        "multiline plant names survive pack serialization and runtime validation");
     definition = Definition(); definition.clock = "999";
     Reject(() => definition.Validate(file, "pack:seed"), "reject undefined numeric growth clocks");
     definition = Definition(); definition.stages![0].pivotX = float.NaN;

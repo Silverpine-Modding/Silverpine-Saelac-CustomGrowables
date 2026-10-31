@@ -21,6 +21,9 @@ buttons and field labels. These inspect sizing calls, not rendered pixels.
 Version 1.7.3 adds text-fitting and sidebar/tooltip wiring checks (157 total):
 exact fits, long IDs, narrow widths, embedded newlines, and Unicode boundaries.
 Text-fitting tests use deterministic sample font metrics, not Unity rendering.
+Version 1.7.4 adds multiline measurement, reference normalization, name
+persistence, and compiled input-wiring checks (173 total). The text-box height is calculated
+by Unity's width-dependent layout; the headless suite does not render it.
 Package restore must already have completed before using `--no-restore`.
 
 Checks cover legacy cache preservation, stage reordering/removal, cache-only
@@ -68,3 +71,11 @@ long names/IDs at 1280×720 and 1920×1080. Each card must have only two visible
 lines with no clipped third line, Search must not split, and hovering should
 reveal full text. Confirm selection, search, scrolling, and dropdowns still work.
 Live rendering of this update has not been verified by the headless suite.
+
+For 1.7.4, enter and delete a long plant name with explicit line breaks,
+including several empty lines at the end. The box should grow and shrink to
+show the whole value. Paste long sprite names, image/GLB paths, and harvest
+references; verify they wrap without widening the panel or overlapping the
+picker/import buttons. Save/reload and check that plant-name line breaks are
+preserved but reference values contain no CR/LF characters. Repeat at 1280×720
+and 1920×1080, scroll through a tall field, then close/reopen the editor.

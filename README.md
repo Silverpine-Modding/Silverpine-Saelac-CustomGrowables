@@ -53,6 +53,14 @@ BepInEx/shared/ArtLibrary/models/
 
 ## In-game Growables Editor
 
+Version 1.7.4 gives text fields full-width, word-wrapped boxes that grow and
+shrink with their content, including trailing empty lines. Plant names accept
+explicit line breaks. Sprite names, image/model paths, and harvest item
+references wrap visually but remain single-line values in saved packs.
+Artwork picker/import buttons have their own row so they do not squeeze the
+input. Numeric and search fields remain single-line. Item cards and compact
+dropdowns keep their existing ellipsis and full-value tooltips.
+
 Version 1.7.3 corrects sidebar overflow that remained in 1.7.2. The sidebar is
 420 design pixels wide, Search has its own single-line label, and item cards
 reserve separate lines for the name and smaller ID. Long values use measured

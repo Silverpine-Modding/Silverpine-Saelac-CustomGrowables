@@ -7,7 +7,7 @@ namespace SilverpineMods.CustomGrowables;
 
 internal sealed partial class GrowableEditorUI
 {
-    private GUIStyle? itemTitleStyle, itemIdStyle, itemCardStyle, tooltipStyle;
+    private GUIStyle? itemTitleStyle, itemIdStyle, itemCardStyle, tooltipStyle, wrappedInputStyle;
     private readonly Dictionary<(GUIStyle Style, string Text), (float Width, string Text)> fittedText = new();
 
     private void EnsureTextStyles()
@@ -25,7 +25,31 @@ internal sealed partial class GrowableEditorUI
             fontSize = 18, alignment = TextAnchor.UpperLeft,
             padding = new RectOffset(14, 14, 12, 12), wordWrap = true, richText = false
         };
+        wrappedInputStyle = new GUIStyle(editorSkin.textArea)
+        {
+            wordWrap = true, richText = false, alignment = TextAnchor.UpperLeft,
+            fixedWidth = 0f, fixedHeight = 0f, stretchWidth = true, stretchHeight = false,
+            contentOffset = Vector2.zero, clipping = TextClipping.Clip,
+            imagePosition = ImagePosition.TextOnly
+        };
+        int verticalPadding = Mathf.Max(9, Mathf.CeilToInt((44f - wrappedInputStyle.lineHeight) / 2f));
+        wrappedInputStyle.padding = new RectOffset(10, 10, verticalPadding, verticalPadding);
         fittedText.Clear();
+    }
+
+    private string DrawWrappedTextInput(string value, bool allowLineBreaks)
+    {
+        // Unity's word-wrapped layout entry measures height after the enclosing
+        // scroll view has assigned the actual width. Do not use GetLastRect's
+        // Layout placeholder or a guessed width to size the text box. A forced
+        // MinHeight would replace the measured minimum and let the scroll view
+        // collapse wrapped lines; padding instead supplies a one-line minimum.
+        var content = new GUIContent(EditorTextLayout.TextMeasurement(value));
+        Rect rect = GUILayoutUtility.GetRect(content, wrappedInputStyle!,
+            GUILayout.MinWidth(0f),
+            GUILayout.ExpandWidth(true), GUILayout.ExpandHeight(false));
+        string next = GUI.TextArea(rect, value, wrappedInputStyle!);
+        return EditorTextLayout.EditableText(next, allowLineBreaks);
     }
 
     private string FitEditorText(string text, float width, GUIStyle style)
