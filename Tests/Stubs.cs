@@ -5,7 +5,7 @@ namespace UnityEngine
     public class GameObject
     {
         public string name;
-        public GameObject(string name = "") { this.name = name; }
+        public GameObject(string name = "") { this.name = name; transform.gameObject = this; }
         public Transform transform = new();
         public HideFlags hideFlags;
         public bool activeInHierarchy = true;
@@ -18,6 +18,7 @@ namespace UnityEngine
             Components[typeof(T)] = component;
             if (component is MonoBehaviour behaviour) behaviour.gameObject = this;
             if (component is Light light) { light.gameObject = this; Light.Created.Add(light); }
+            if (component is ParticleSystem particles) { particles.gameObject = this; ParticleSystem.Created.Add(particles); }
             return component;
         }
         public T GetComponent<T>() where T : new() => Components.TryGetValue(typeof(T), out var component) ? (T)component : AddComponent<T>();

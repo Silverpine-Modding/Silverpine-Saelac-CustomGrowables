@@ -19,8 +19,15 @@ internal static class BinaryChecks
             check(missing.Length == 0, $"compiled Growables resolves all {references.Length} member references against installed {dependency}: " + string.Join(", ", missing));
         }
         var runtime = assembly.MainModule.GetType("SilverpineMods.CustomGrowables.CustomGrowable");
-        check(!runtime.Methods.Any(m => m.Name == "OnDestroy") && runtime.Methods.Any(m => m.Name == "OnDisable"),
-            "release artifact retains OnDisable cleanup without a plant OnDestroy method");
+        check(runtime.Methods.Any(m => m.Name == "OnDisable"),
+            "plant cleanup also runs when temporarily disabled, not only when destroyed");
+        var bootstrap = assembly.MainModule.GetType("SilverpineMods.CustomGrowables.Plugin");
+        check(!bootstrap.Methods.Where(m => m.HasBody && (m.Name == "OnDestroy" || m.Name == "OnDisable"))
+                .SelectMany(m => m.Body.Instructions).Any(i => i.Operand is MethodReference m &&
+                    (m.Name.StartsWith("Unpatch", StringComparison.Ordinal) ||
+                     m.Name.StartsWith("Unregister", StringComparison.Ordinal) ||
+                     m.Name.StartsWith("remove_", StringComparison.Ordinal))),
+            "bootstrap host destruction cannot unpatch or unregister persistent gameplay hooks; object-local cleanup remains allowed");
         var editor = assembly.MainModule.GetType("SilverpineMods.CustomGrowables.GrowableEditorUI");
         bool Calls(MethodDefinition method, string name) => method.Body.Instructions.Any(i => i.Operand is MethodReference m && m.Name == name);
         var applyStage = runtime.Methods.Single(m => m.Name == "ApplyStage");
@@ -51,6 +58,23 @@ internal static class BinaryChecks
                 i.Operand is GenericInstanceMethod m && m.GenericArguments.Any(t => t.Name == "LightAttacher" || t.Name == "TileLight")),
             "adding stage glow does not change the prefab's native serializable component layout");
         var seed = assembly.MainModule.GetType("SilverpineMods.CustomGrowables.ItemComponent_CustomGrowableSeed");
+        var qualityParticles = assembly.MainModule.GetType("SilverpineMods.CustomGrowables.QualityParticles");
+        var applyParticles = qualityParticles.Methods.Single(m => m.Name == "Apply");
+        bool CallsParticles(MethodDefinition method, string name) => method.Body.Instructions.Any(i =>
+            i.Operand is MethodReference m && m.Name == name && m.DeclaringType.FullName == qualityParticles.FullName);
+        check(qualityParticles.BaseType.FullName == "System.Object" && !qualityParticles.Interfaces.Any() &&
+                CallsParticles(applyStage, "Apply") &&
+                CallsParticles(runtime.Methods.Single(m => m.Name == "OnDisable"), "Clear") &&
+                CallsParticles(runtime.Methods.Single(m => m.Name == "PrepareForRemoval"), "Clear"),
+            "quality glitter is derived transient state cleaned up on disable/removal without new serialized behaviours");
+        var nativeColor = gameAssembly.MainModule.GetType("QualityExtensions").Methods.Single(m => m.Name == "GetColor");
+        check(applyParticles.Body.Instructions.Any(i => i.Operand is MethodReference m && m.FullName == nativeColor.FullName) &&
+                applyParticles.Body.Instructions.Any(i => i.OpCode.Code == Code.Ldstr &&
+                    Equals(i.Operand, "MiscPrefabs/prefab_effect_glitter_rarity")) && Calls(applyParticles, "Instantiate"),
+            "quality glitter clones the native world prefab and uses the installed game's quality-color API");
+        check(!Calls(applyParticles, "SetSortingOrder") && Calls(applyParticles, "set_sortingOrder") &&
+                Calls(applyParticles, "Stop") && Calls(applyParticles, "set_startColor") && Calls(applyParticles, "Play"),
+            "particle activation updates sorting directly and sets quality color before emission");
         check(seed.Interfaces.Any(i => i.InterfaceType.Name == "IQualityItemComponent") &&
                 Calls(registry.Methods.Single(m => m.Name == "Plant"), "SetSeedQuality") &&
                 Calls(runtime.Methods.Single(m => m.Name == "HarvestInto"), "ApplyHarvest"),
@@ -94,6 +118,37 @@ internal static class BinaryChecks
             "sidebar cards route both name and ID through width-fitted single-line rendering");
         check(Calls(editor.Methods.Single(m => m.Name == "OnGUI"), "DrawEditorTooltip"),
             "full values remain accessible through a rendered tooltip, not just unused GUIContent metadata");
+        var pickerScreen = editor.Methods.Single(m => m.Name == "DrawPickerScreen");
+        check(Calls(pickerScreen, "DrawPickerOption"),
+            "all picker rows use content-measured multiline rendering instead of single-line minimum-height buttons");
+        var pickerRow = editor.Methods.Single(m => m.Name == "DrawPickerOption");
+        check(pickerRow.Body.Instructions.Any(i => i.Operand is MethodReference m && m.Name == "GetRect" &&
+                m.Parameters.Count >= 2 && m.Parameters[0].ParameterType.Name == "GUIContent" &&
+                m.Parameters[1].ParameterType.Name == "GUIStyle") && Calls(pickerRow, "TextMeasurement") &&
+                pickerRow.Body.Instructions.Any(i => i.Operand is MethodReference m && m.Name == "Button" &&
+                    m.DeclaringType.FullName == "UnityEngine.GUI"),
+            "picker labels reserve their measured content height before drawing the clickable row");
+        check(!Calls(pickerRow, "MinHeight") && !Calls(pickerRow, "MaxHeight") && !Calls(pickerRow, "Height") &&
+                !Calls(pickerRow, "FitEditorText"),
+            "picker rows cannot shrink wrapped names and IDs to a forced height or truncate their text");
+        var styleInstructions = editor.Methods.Single(m => m.Name == "EnsureTextStyles").Body.Instructions.ToList();
+        int pickerStyleEnd = styleInstructions.FindIndex(i => i.OpCode.Code == Code.Stfld &&
+            i.Operand is FieldReference f && f.Name == "pickerOptionStyle");
+        // The initialization follows the previous style-field assignment.
+        int pickerStyleStart = styleInstructions.Take(Math.Max(0, pickerStyleEnd)).ToList().FindLastIndex(i =>
+            i.OpCode.Code == Code.Stfld && i.Operand is FieldReference);
+        var pickerStyle = styleInstructions.Skip(pickerStyleStart + 1).Take(pickerStyleEnd - pickerStyleStart).ToArray();
+        bool SetsStyle(string property, Code value) => pickerStyle.Any(i => i.Operand is MethodReference m &&
+            m.Name == "set_" + property && i.Previous?.OpCode.Code == value);
+        check(pickerStyleEnd >= 0 && SetsStyle("wordWrap", Code.Ldc_I4_1) && SetsStyle("richText", Code.Ldc_I4_0) &&
+                SetsStyle("stretchHeight", Code.Ldc_I4_0) && pickerStyle.Any(i => i.Operand is MethodReference m &&
+                    m.Name == "set_fixedHeight" && Equals(i.Previous?.Operand, 0f)) &&
+                pickerStyle.Any(i => i.Operand is MethodReference m && m.Name == "set_alignment" &&
+                    i.Previous?.OpCode.Code == Code.Ldc_I4_3),
+            "picker row style wraps literal text, aligns left, and clears inherited fixed-height constraints");
+        check(pickerScreen.Body.Instructions.Count(i => i.OpCode.Code == Code.Stfld && i.Operand is FieldReference f &&
+                f.Name == "pickerScroll" && i.Previous?.Operand is MethodReference m && m.Name == "get_zero") == 3,
+            "search changes reset picker scrolling as well as both page navigation actions");
         var textInput = editor.Methods.Single(m => m.Name == "DrawWrappedTextInput");
         check(Calls(textInput, "GetRect") && Calls(textInput, "TextMeasurement") &&
             Calls(textInput, "TextArea") && Calls(textInput, "EditableText"),

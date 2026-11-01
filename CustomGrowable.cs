@@ -30,6 +30,7 @@ public sealed class CustomGrowable :
     private bool harvesting;
     private Quality seedQuality;
     private StageLight? stageLight;
+    private QualityParticles? qualityParticles;
 
     public string InteractionName => "Harvest";
 
@@ -95,6 +96,7 @@ public sealed class CustomGrowable :
     {
         UnsubscribeFromTurns();
         stageLight?.Clear();
+        qualityParticles?.Clear();
     }
 
     private void UnsubscribeFromTurns()
@@ -185,6 +187,12 @@ public sealed class CustomGrowable :
             // lifecycle without calling into its uninitialized private state.
             renderer.sortingOrder = Mathf.RoundToInt((0f - transform.position.y) * 10f) + sorter.offset;
         }
+        if (!beingRemoved && isActiveAndEnabled && gameObject != definition.Template && seedQuality != Quality.Normal)
+        {
+            qualityParticles ??= new QualityParticles();
+            qualityParticles.Apply(transform, seedQuality, stage.offsetX, stage.offsetY);
+        }
+        else qualityParticles?.Clear();
         if (isActiveAndEnabled) TrySubscribeToTurns();
     }
 
@@ -392,7 +400,13 @@ public sealed class CustomGrowable :
         finally { harvesting = false; }
     }
 
-    internal void PrepareForRemoval() { beingRemoved = true; UnsubscribeFromTurns(); stageLight?.Clear(); }
+    internal void PrepareForRemoval()
+    {
+        beingRemoved = true;
+        UnsubscribeFromTurns();
+        stageLight?.Clear();
+        qualityParticles?.Clear();
+    }
 
     private void RemovePlant()
     {

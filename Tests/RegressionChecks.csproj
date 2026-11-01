@@ -11,6 +11,7 @@
     <Compile Include="..\Definitions.cs" Link="Production\Definitions.cs" />
     <Compile Include="..\GrowableLightDefinition.cs" Link="Production\GrowableLightDefinition.cs" />
     <Compile Include="..\StageLight.cs" Link="Production\StageLight.cs" />
+    <Compile Include="..\QualityParticles.cs" Link="Production\QualityParticles.cs" />
     <Compile Include="..\GrowableQuality.cs" Link="Production\GrowableQuality.cs" />
     <Compile Include="..\GrowthSeasons.cs" Link="Production\GrowthSeasons.cs" />
     <Compile Include="..\GrowthProgress.cs" Link="Production\GrowthProgress.cs" />

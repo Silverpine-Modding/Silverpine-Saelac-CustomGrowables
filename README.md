@@ -12,6 +12,7 @@ Custom Growables supports:
 - Per-stage size multipliers layered on the plant's base world scale.
 - Native diffuse world lighting and optional per-stage colored point lights.
 - Seed quality carried into the plant and all quality-capable harvest items.
+- Native quality-colored glitter on above-Normal plants, through all stages.
 - Optional, independently configurable +1 through +6-tier harvest-quality chances.
 - Real-world-hour or processed-game-turn growth.
 - Save/load persistence and offline real-time progress.
@@ -55,6 +56,16 @@ BepInEx/shared/ArtLibrary/models/
 ```
 
 ## In-game Growables Editor
+
+Version 1.8.3 fixes clipped text in the harvest-item picker and other choice
+screens. Rows are left-aligned and grow to fit the full label, including the
+separate item-ID line and wrapped long names/paths. The scroll view can no
+longer squeeze them into single-line buttons. Changing or clearing search
+returns to the top of the results; selection and Cancel behavior are unchanged.
+Plants above Normal quality also display the base game's quality glitter,
+colored from their inherited seed quality. The effect persists through growth,
+regrowth and save/load, and follows per-stage artwork offsets. No pack edits
+or save migration are required.
 
 Version 1.8.2 fixes missing ground glow for small stage lights. Light depth
 now uses the native terrain plane rather than the tree-style sprite depth.
@@ -371,6 +382,23 @@ save/load, stage changes, and perennial harvests. Each harvested item that
 already supports quality receives the plant's quality, including returned
 growable seeds and inventory-overflow drops. Items without native quality
 support are unchanged; they are not given artificial quality components.
+
+Above-Normal plants automatically use the native world quality-particle prefab
+at every growth stage: green for Quality, light blue for Superior, magenta for
+Exceptional, yellow for Pristine, white for Blessed, and red for Legendary.
+Normal plants have no glitter. It stays native-sized around the planted point
+plus the current stage's X/Y art offsets, independently of sprite/GLB scale.
+Sorting stays anchored to the planted tile, like the plant itself. This is a
+visual quality indicator, not a light source; stage glow settings remain
+independent. The editor's sprite preview does not simulate particles. Existing
+saved quality-bearing plants gain the effect when loaded, without pack edits.
+Disabling/removing a plant clears its transient effect through `OnDisable`
+and explicit removal cleanup; no `OnDestroy` callback is added.
+
+This is not a blanket restriction on `OnDestroy`: object-local cleanup can
+use it. Silverpine's bootstrap-host destruction must not tear down persistent
+plugin registrations or Harmony patches. Effect cleanup first deactivates
+the child, then destroys it; it does not retain disabled effects or save them.
 
 An optional per-plant harvest setting can improve individual products:
 

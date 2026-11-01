@@ -6,6 +6,32 @@ components, timing, seasons, preview snapshots, editor validation,
 seed compatibility, cache migration, and Modding Tools shared-art code.
 Small game/path stubs allow these tests to run outside Unity.
 
+Version 1.8.3 adds binary guards for content-measured picker rows, wrapping,
+left alignment, literal labels, absence of forced height constraints, and
+scroll reset when filtering. The old picker fails the routing guard. These
+checks inspect compiled layout calls; they do not render Unity UI. In-game,
+open Choose Harvest Item with enough items to scroll, verify both the name
+and qualified ID are fully visible, then test long/multiline names, artwork
+paths, selecting an item, Cancel/Escape, page navigation, and searching or
+clearing search after scrolling to the bottom at 1280x720 and 1920x1080.
+
+It also tests native quality glitter: all six above-Normal colors, no Normal
+effect, inactive/template exclusion, color-before-emission, native material
+reuse, scale-independent sizing, per-stage art offsets with planted-tile
+sorting, no restart on unchanged refresh, growth/regrowth, save/load,
+disable/reenable, removal and missing/failed assets. Harvest-quality bonuses
+must not recolor the plant. Binary guards verify the native world prefab path,
+native quality-color API, direct sorting and non-serialized lifecycle wiring.
+The world prefab/resource key, native sorting offset (2), layer, relative Z
+(1), and native quality palette were inspected in Silverpine 1.7.3's assets
+and code. These are headless lifecycle/geometry checks, not rendered Unity
+particles. In-game, compare each seed quality against a natural quality plant,
+including an upward-offset stage, a large GLB, harvest/regrowth, save/reload,
+and removal. Normal plants must stay particle-free; stage lights must remain
+independent. The lifecycle guard protects persistent bootstrap registrations,
+not a blanket ban on object-local `OnDestroy`. The 1.8.3 suite passes 337 checks,
+including compiled-plugin and installed-dependency checks.
+
 Version 1.8.2 adds light geometry regressions using the inspected native
 asset depths: oak/custom plants Z=0.5, grass/Morning Dew Z=1, and Morning
 Dew's light Z=0.45. They reproduce the old radius-1 light not reaching grass,

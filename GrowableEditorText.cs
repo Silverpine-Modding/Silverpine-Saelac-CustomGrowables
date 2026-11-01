@@ -7,7 +7,7 @@ namespace SilverpineMods.CustomGrowables;
 
 internal sealed partial class GrowableEditorUI
 {
-    private GUIStyle? itemTitleStyle, itemIdStyle, itemCardStyle, tooltipStyle, wrappedInputStyle;
+    private GUIStyle? itemTitleStyle, itemIdStyle, itemCardStyle, tooltipStyle, wrappedInputStyle, pickerOptionStyle;
     private readonly Dictionary<(GUIStyle Style, string Text), (float Width, string Text)> fittedText = new();
 
     private void EnsureTextStyles()
@@ -20,6 +20,13 @@ internal sealed partial class GrowableEditorUI
         itemIdStyle = new GUIStyle(itemTitleStyle) { fontSize = 18 };
         itemIdStyle.normal.textColor = new Color(.65f, .69f, .68f);
         itemCardStyle = new GUIStyle(editorAction!) { padding = new RectOffset(), fixedHeight = 0f };
+        pickerOptionStyle = new GUIStyle(editorSkin!.button)
+        {
+            wordWrap = true, richText = false, alignment = TextAnchor.MiddleLeft,
+            fixedWidth = 0f, fixedHeight = 0f, stretchWidth = true, stretchHeight = false,
+            padding = new RectOffset(14, 14, 12, 12), contentOffset = Vector2.zero,
+            clipping = TextClipping.Clip, imagePosition = ImagePosition.TextOnly
+        };
         tooltipStyle = new GUIStyle(editorSkin!.box)
         {
             fontSize = 18, alignment = TextAnchor.UpperLeft,
@@ -79,6 +86,17 @@ internal sealed partial class GrowableEditorUI
         GUI.Label(idRect, new GUIContent(FitEditorText(id, idRect.width, itemIdStyle!), tooltip), itemIdStyle!);
         GUILayout.Space(6);
         return clicked;
+    }
+
+    private bool DrawPickerOption(string text)
+    {
+        // The scroll view assigns the width before Unity measures wrapped text.
+        // A forced MinHeight replaces that measured minimum and can collapse
+        // two-line names/IDs back to one-line rows. Padding supplies breathing
+        // room without overriding the full content height.
+        Rect row = GUILayoutUtility.GetRect(new GUIContent(EditorTextLayout.TextMeasurement(text)), pickerOptionStyle!,
+            GUILayout.MinWidth(0f), GUILayout.ExpandWidth(true), GUILayout.ExpandHeight(false));
+        return GUI.Button(row, new GUIContent(text, text), pickerOptionStyle!);
     }
 
     private bool DrawSingleLineChoice(string text)

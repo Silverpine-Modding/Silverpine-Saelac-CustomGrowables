@@ -6,7 +6,25 @@ namespace UnityEngine
 {
     public sealed class SerializeField : Attribute { }
     public enum HideFlags { None }
-    public class Object { public static void Destroy(object value) { if (value is GameObject gameObject) gameObject.Destroyed = true; } }
+    public class Object
+    {
+        public static bool FailParticleClone;
+        public static void Destroy(object value) { if (value is GameObject gameObject) gameObject.Destroyed = true; }
+        public static GameObject Instantiate(GameObject original, Transform parent, bool worldPositionStays)
+        {
+            if (FailParticleClone) throw new InvalidOperationException("Simulated missing particle asset");
+            var clone = new GameObject(original.name);
+            clone.transform.SetParent(parent, worldPositionStays);
+            clone.transform.localPosition = original.transform.localPosition;
+            clone.transform.localScale = original.transform.localScale;
+            clone.AddComponent<ParticleSystem>().StartColor = original.GetComponent<ParticleSystem>().StartColor;
+            var renderer = clone.AddComponent<ParticleSystemRenderer>();
+            renderer.sortingLayerID = original.GetComponent<ParticleSystemRenderer>().sortingLayerID;
+            renderer.sharedMaterial = original.GetComponent<ParticleSystemRenderer>().sharedMaterial;
+            ParticleSystem.ClonedUnderInactiveParent = !parent.gameObject!.activeInHierarchy;
+            return clone;
+        }
+    }
     public class MonoBehaviour
     {
         public GameObject gameObject = new();
@@ -16,11 +34,24 @@ namespace UnityEngine
     }
     public class Transform
     {
-        public Vector3 position, localScale = Vector3.one;
+        public GameObject? gameObject;
+        public Vector3 localPosition, localScale = Vector3.one;
+        public Vector3 position
+        {
+            get => parent == null ? localPosition : new(parent.position.x + localPosition.x * parent.lossyScale.x,
+                parent.position.y + localPosition.y * parent.lossyScale.y, parent.position.z + localPosition.z * parent.lossyScale.z);
+            set => localPosition = parent == null ? value : new((value.x - parent.position.x) / parent.lossyScale.x,
+                (value.y - parent.position.y) / parent.lossyScale.y, (value.z - parent.position.z) / parent.lossyScale.z);
+        }
         public Transform? parent;
         public Vector3 lossyScale => parent == null ? localScale : new(
             parent.lossyScale.x * localScale.x, parent.lossyScale.y * localScale.y, parent.lossyScale.z * localScale.z);
-        public void SetParent(Transform value, bool worldPositionStays) => parent = value;
+        public void SetParent(Transform value, bool worldPositionStays)
+        {
+            Vector3 previous = position;
+            parent = value;
+            if (worldPositionStays) position = previous;
+        }
     }
     public struct Vector2Int
     {

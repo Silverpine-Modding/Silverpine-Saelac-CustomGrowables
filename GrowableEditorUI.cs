@@ -1877,7 +1877,7 @@ internal sealed partial class GrowableEditorUI : ModToolBehaviour
         if (filteredPickerOptions == null || filteredPickerSearch != pickerSearch)
         {
             filteredPickerOptions = pickerOptions.Where(PickerMatches).ToArray();
-            filteredPickerSearch = pickerSearch; pickerPage = 0;
+            filteredPickerSearch = pickerSearch; pickerPage = 0; pickerScroll = Vector2.zero;
         }
         int pages = Math.Max(1, (filteredPickerOptions.Length + PickerPageSize - 1) / PickerPageSize);
         GUILayout.BeginHorizontal();
@@ -1896,7 +1896,7 @@ internal sealed partial class GrowableEditorUI : ModToolBehaviour
                     pickerCurrent,
                     StringComparison.OrdinalIgnoreCase))
                 GUI.backgroundColor = new Color(0.48f, 0.75f, 0.46f);
-            if (GUILayout.Button(option.Label, GUILayout.MinHeight(42)))
+            if (DrawPickerOption(option.Label))
             {
                 Action<string>? callback = pickerCallback;
                 string value = option.Value;
