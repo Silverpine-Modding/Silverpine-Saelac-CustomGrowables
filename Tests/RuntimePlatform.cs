@@ -30,7 +30,7 @@ namespace UnityEngine
         public override bool Equals(object? o) => o is Vector2Int v && this == v;
         public override int GetHashCode() => HashCode.Combine(x, y);
     }
-    public class SpriteRenderer { public Sprite? sprite; }
+    public class SpriteRenderer { public Sprite? sprite; public int sortingOrder; }
     public static class Time { public static float fixedUnscaledDeltaTime = .02f; }
     public static class Random
     {
@@ -54,7 +54,17 @@ public class LightFlickerer { }
 public enum Quality { Normal, Quality, Superior, Exceptional, Pristine, Blessed, Legendary }
 public interface IQualityItemComponent { Quality Quality { get; set; } }
 public class QualityTestComponent : ItemComponent, IQualityItemComponent { public Quality Quality { get; set; } }
-public class YSorter { public void SetSortingOrder() { } }
+// Native YSorter does not cache its renderer until Awake. Keep this strict:
+// a no-op SetSortingOrder hides cross-component activation-order failures.
+public class YSorter : MonoBehaviour
+{
+    private SpriteRenderer? spriteRenderer;
+    public int offset;
+    public bool HasAwakened => spriteRenderer != null;
+    public void Awake() => spriteRenderer = GetComponent<SpriteRenderer>();
+    public void SetSortingOrder(int additionalOffset = 0) =>
+        spriteRenderer!.sortingOrder = Mathf.RoundToInt((0f - transform.position.y) * 10f) + offset + additionalOffset;
+}
 public static class SerializationManager { public static bool loadingSave; }
 public enum Season { Spring, Summer, Autumn, Winter }
 public class WorldInfoManager

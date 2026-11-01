@@ -16,6 +16,7 @@ namespace UnityEngine
         {
             var component = new T();
             Components[typeof(T)] = component;
+            if (component is MonoBehaviour behaviour) behaviour.gameObject = this;
             if (component is Light light) { light.gameObject = this; Light.Created.Add(light); }
             return component;
         }
@@ -49,6 +50,7 @@ namespace UnityEngine
     public static class Mathf
     {
         public static float Round(float x) => (float)System.Math.Round(x);
+        public static int RoundToInt(float x) => (int)System.Math.Round(x);
         public static int Clamp(int v, int min, int max) => System.Math.Clamp(v, min, max);
     }
 }

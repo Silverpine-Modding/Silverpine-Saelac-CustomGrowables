@@ -9,7 +9,8 @@ using UnityEngine;
 
 namespace SilverpineMods.CustomGrowables;
 
-// Matches Item Loader's light fields, with world-space offsets for stage placement.
+// Matches Item Loader's light fields, with world-unit stage placement offsets.
+// XY is relative to the planted tile; Z is relative to the native terrain plane.
 internal sealed class GrowableLightDefinition
 {
     private static readonly GrowableLightDefinition DewPreset = MorningDew();

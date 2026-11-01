@@ -193,6 +193,7 @@ try
             geometrySnapshot.Equals(new StagePreviewGeometry(1, previewStage)) && GrowthSeasons.Allows(15, i % 4);
     long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
     Check(equal && allocated == 0, "100,000 cached preview/season comparisons allocate zero managed bytes");
+    SortingLifecycleChecks.Run(Check, file);
     RuntimeChecks.Run(Check, file);
     LightingQualityChecks.Run(Check, file);
     foreach (string invalid in new[] { "", "-", "abc", "NaN", "Infinity", "1e100" })

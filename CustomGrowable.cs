@@ -178,8 +178,13 @@ public sealed class CustomGrowable :
         }
         else stageLight?.Clear();
         YSorter? sorter = GetComponent<YSorter>();
-        if (sorter != null && gameObject.activeInHierarchy)
-            sorter.SetSortingOrder();
+        if (renderer != null && sorter != null && gameObject.activeInHierarchy)
+        {
+            // OnEnable/restore can run before YSorter.Awake caches its renderer.
+            // Match native tree sorting directly; keep YSorter for its normal
+            // lifecycle without calling into its uninitialized private state.
+            renderer.sortingOrder = Mathf.RoundToInt((0f - transform.position.y) * 10f) + sorter.offset;
+        }
         if (isActiveAndEnabled) TrySubscribeToTurns();
     }
 

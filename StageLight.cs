@@ -7,6 +7,9 @@ namespace SilverpineMods.CustomGrowables;
 // The saved growth stage and current pack settings are the source of truth.
 internal sealed class StageLight
 {
+    // Native grass and Morning Dew sit at Z=1; tree-style plant rendering is
+    // at Z=.5. Light depth must use the terrain plane, not that sorting depth.
+    private const float TerrainPlaneZ = 1f;
     private Light? light;
     private GrowableLightDefinition? applied;
 
@@ -45,8 +48,12 @@ internal sealed class StageLight
 
     private void Position(Transform parent, GrowableLightDefinition settings)
     {
-        // Offsets and radius are in world units, independent of plant/stage scale.
-        light!.transform.position = parent.position + new Vector3(settings.offsetX, settings.offsetY, settings.offsetZ);
+        // XY follows the planted tile; Z is relative to the native terrain
+        // plane. Adding -.55 to tree Z=.5 would leave a range-1 light more
+        // than one unit from grass (Z=1), eliminating its ground glow.
+        Vector3 position = parent.position;
+        light!.transform.position = new Vector3(position.x + settings.offsetX,
+            position.y + settings.offsetY, TerrainPlaneZ + settings.offsetZ);
         Vector3 scale = parent.lossyScale;
         light.transform.localScale = new Vector3(1f / scale.x, 1f / scale.y, 1f / scale.z);
     }

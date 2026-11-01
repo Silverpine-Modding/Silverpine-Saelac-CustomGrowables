@@ -49,8 +49,9 @@ internal sealed partial class GrowableEditorUI
         GUILayout.Label("Light position relative to the planted tile, not the sprite pivot. X right / Y up.", editorMuted!);
         DrawFloat("Light offset X", prefix + "x", light.offsetX, value => Set(ref light.offsetX, value));
         DrawFloat("Light offset Y", prefix + "y", light.offsetY, value => Set(ref light.offsetY, value));
-        DrawFloat("Light depth (Z)", prefix + "z", light.offsetZ, value => Set(ref light.offsetZ, value));
-        GUILayout.Label("Native depth is -0.55. Morning Dew is a small warm glow; Lantern matches Item Loader's defaults. " +
+        DrawFloat("Light depth from terrain (Z)", prefix + "z", light.offsetZ, value => Set(ref light.offsetZ, value));
+        GUILayout.Label("Depth is relative to the ground, not tree sorting depth. Native -0.55 puts the light at world Z 0.45. " +
+            "Morning Dew is a small warm glow; Lantern matches Item Loader's defaults. " +
             "The artwork preview does not simulate world lighting.", editorMuted!);
     }
 

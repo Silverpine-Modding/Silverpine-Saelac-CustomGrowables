@@ -23,6 +23,20 @@ internal static class BinaryChecks
             "release artifact retains OnDisable cleanup without a plant OnDestroy method");
         var editor = assembly.MainModule.GetType("SilverpineMods.CustomGrowables.GrowableEditorUI");
         bool Calls(MethodDefinition method, string name) => method.Body.Instructions.Any(i => i.Operand is MethodReference m && m.Name == name);
+        var applyStage = runtime.Methods.Single(m => m.Name == "ApplyStage");
+        check(!runtime.Methods.Where(m => m.HasBody).Any(m => Calls(m, "SetSortingOrder")) &&
+                Calls(applyStage, "RoundToInt") && Calls(applyStage, "set_sortingOrder"),
+            "stage updates sort directly without calling YSorter before its Awake");
+        using var gameAssembly = AssemblyDefinition.ReadAssembly(Path.Combine(game, "Silverpine_Data", "Managed", "Assembly-CSharp.dll"));
+        var nativeSorter = gameAssembly.MainModule.GetType("YSorter");
+        var nativeSort = nativeSorter.Methods.Single(m => m.Name == "SetSortingOrder");
+        check(nativeSorter.Methods.Single(m => m.Name == "Awake").Body.Instructions.Any(i =>
+                i.OpCode.Code == Code.Stfld && i.Operand is FieldReference f && f.Name == "spriteRenderer") &&
+                nativeSort.Body.Instructions.Any(i => i.OpCode.Code == Code.Ldfld && i.Operand is FieldReference f && f.Name == "spriteRenderer") &&
+                nativeSort.Body.Instructions.Any(i => i.OpCode.Code == Code.Ldc_R4 && Equals(i.Operand, 10f)) &&
+                nativeSort.Body.Instructions.Any(i => i.OpCode.Code == Code.Ldfld && i.Operand is FieldReference f && f.Name == "offset") &&
+                Calls(nativeSort, "RoundToInt") && Calls(nativeSort, "set_sortingOrder"),
+            "installed native YSorter caches its renderer in Awake and uses rounded Y-times-ten plus offset");
         var registry = assembly.MainModule.GetType("SilverpineMods.CustomGrowables.GrowableRegistry");
         var nativeRendering = registry.Methods.Single(m => m.Name == "ApplyNativeTreeRendering");
         check(Calls(nativeRendering, "get_sharedMaterial") && Calls(nativeRendering, "set_sharedMaterial") &&

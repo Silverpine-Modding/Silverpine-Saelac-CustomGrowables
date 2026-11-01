@@ -6,6 +6,29 @@ components, timing, seasons, preview snapshots, editor validation,
 seed compatibility, cache migration, and Modding Tools shared-art code.
 Small game/path stubs allow these tests to run outside Unity.
 
+Version 1.8.2 adds light geometry regressions using the inspected native
+asset depths: oak/custom plants Z=0.5, grass/Morning Dew Z=1, and Morning
+Dew's light Z=0.45. They reproduce the old radius-1 light not reaching grass,
+verify the native ground footprint at both parent depths, and check custom
+depth/XY offsets with scaled plants. These checks validate geometry, not
+rendered pixels; compare mature planted Morning Dew with the native plant at
+night after installing the fix. Existing test light hosts now use the actual
+custom-plant depth instead of a Z=1 stand-in. The 1.8.2 suite passes 302 checks,
+including the installed-binary checks.
+
+Version 1.8.1 replaces the no-op YSorter stub with an Awake-dependent renderer
+cache matching the native failure. The new activation-order test reproduces
+the reported `OnEnable → ApplyStage → SetSortingOrder` null reference against
+the old code. It checks both Awake orders, inactive setup, Start, growth,
+save restoration/art refresh before Awake, reactivation, and native rounding
+at positive/negative Y positions. Binary checks also inspect the installed
+game's YSorter initialization and ensure stage updates do not call it early.
+This is explicit lifecycle simulation, not Unity lifecycle execution.
+The 1.8.1 suite, including installed-binary checks, passes 297 checks. For a
+live confirmation, plant immediately after loading the game, grow through a
+stage change, save/reload, and verify there are no YSorter exceptions and
+tree/wall layering remains unchanged.
+
 Version 1.8.0 adds production stage-light and harvest-quality checks: presets,
 validation, independent stage copies, scale-independent positioning, lifecycle
 cleanup, growth/regrowth switching, quality persistence, legacy saves, native

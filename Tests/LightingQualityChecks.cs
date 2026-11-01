@@ -35,6 +35,28 @@ internal static class LightingQualityChecks
         check(dew.PresetName == "Morning Dew" && dew.radius == 1 && dew.intensity == 1 && !dew.flicker &&
             Math.Abs(dew.Color.g - .89451975f) < .00001f && dew.offsetZ == -.55f,
             "Morning Dew preset matches the inspected native warm steady point light");
+        // Inspected native assets: oak/our plants use Z=.5; grass and Morning
+        // Dew use Z=1; the native light's local -.55 puts it at world Z=.45.
+        var geometryLight = new StageLight();
+        foreach (float plantDepth in new[] { .5f, 1f })
+        {
+            var parent = new Transform { position = new Vector3(10, 20, plantDepth), localScale = Vector3.one * 3 };
+            geometryLight.Apply(parent, dew);
+            Light point = Light.Created.Last();
+            check(Math.Abs(point.transform.position.z - .45f) < .00001f &&
+                    Math.Abs(1f - point.transform.position.z) < point.range,
+                "Morning Dew light reaches the grass plane independently of plant sorting depth " + plantDepth);
+            float z = 1f - point.transform.position.z;
+            check(Math.Abs(Math.Sqrt(point.range * point.range - z * z) - Math.Sqrt(1f - .55f * .55f)) < .00001f,
+                "Morning Dew ground footprint matches native light/terrain separation at plant depth " + plantDepth);
+        }
+        var movedParent = new Transform { position = new Vector3(30, 40, .5f), localScale = Vector3.one * .25f };
+        var customDepth = dew.Copy(); customDepth.offsetX = .25f; customDepth.offsetY = -.5f; customDepth.offsetZ = -.75f;
+        geometryLight.Apply(movedParent, customDepth);
+        check(Light.Created.Last().transform.position.Equals(new Vector3(30.25f, 39.5f, .25f)) &&
+                Light.Created.Last().transform.lossyScale.Equals(Vector3.one),
+            "custom light depth is terrain-relative while XY follows the plant without scale distortion");
+        geometryLight.Clear();
         check(lantern.PresetName == "Lantern" && lantern.radius == 5 && lantern.intensity == 2 && lantern.flicker && lantern.Color.g == .68f,
             "Lantern preset matches Item Loader's color, radius, intensity, and flicker defaults");
         lantern.extensionData = new Dictionary<string, JToken> { ["future"] = JObject.Parse("{\"x\":1}") };
@@ -84,14 +106,14 @@ internal static class LightingQualityChecks
         DungeonGenerationManager.Instance = new(); SerializationManager.loadingSave = false;
         ActionQueue.Instance = new(); UnityEngine.Random.value = 0;
         var template = new CustomGrowable(); definition.Template = template.gameObject;
-        template.transform.position = new Vector3(0, 0, 1);
+        template.transform.position = new Vector3(0, 0, .5f);
         definition.stages[0].light = dew;
         int lightsBefore = Light.Created.Count;
         template.Configure(definition.QualifiedId);
         check(Light.Created.Count == lightsBefore, "prefab templates never create live stage lights");
         Invoke(template, "OnDisable"); definition.stages[0].light = null;
 
-        var plant = new CustomGrowable(); plant.transform.position = new Vector3(10, 20, 1);
+        var plant = new CustomGrowable(); plant.transform.position = new Vector3(10, 20, .5f);
         plant.Configure(definition.QualifiedId); plant.SetSeedQuality(Quality.Pristine);
         ActionQueue.Instance.Turn();
         check(Light.Created.Count == lightsBefore, "unlit seedling and regrowth stages allocate no light objects");

@@ -56,6 +56,18 @@ BepInEx/shared/ArtLibrary/models/
 
 ## In-game Growables Editor
 
+Version 1.8.2 fixes missing ground glow for small stage lights. Light depth
+now uses the native terrain plane rather than the tree-style sprite depth.
+The Morning Dew preset reaches the grass with its original radius/intensity,
+without changing plant sorting or requiring pack edits. The depth control is
+labeled terrain-relative; the existing `offsetZ` field is retained.
+
+Version 1.8.1 fixes a planting/restore activation-order exception in
+`YSorter.SetSortingOrder`. Stage updates apply native Y-based sorting directly
+to the existing renderer, without depending on whether `YSorter.Awake` has
+already run. Native tree layering, stage lights, and quality are preserved;
+no save-format changes or `OnDestroy` callbacks are introduced.
+
 Version 1.8.0 fixes nighttime brightness by sharing the native tree's diffuse
 material. All plant art sources now respond to sunlight and local lights.
 In **Stages & Art → Stage light / glow**, enable a separate light for any
@@ -334,7 +346,10 @@ radius `5`, intensity `2`, with native lantern flicker. RGB values must be
 finite numbers from 0–1; radius is 0.1–50 tiles and intensity is 0–20. Light
 offsets are relative to the planted tile in world units (X right, Y up, Z
 depth), independent of stage/art scale and sprite offsets. X/Y accept -100–100;
-Z accepts -10–10. The native light depth is -0.55.
+Z accepts -10–10 and is relative to the terrain plane at world Z=1, not the
+plant's tree-style sorting depth. Native -0.55 therefore places the light at
+world Z=0.45, matching Morning Dew's ground-light footprint. In 1.8.0/1.8.1,
+adding the same offset to the plant's Z=0.5 put grass outside a radius-1 light.
 
 Stages do not inherit lights from the previous stage. Growth, harvesting,
 regrowth, and save restoration select the current stage's light. Duplicated
