@@ -13,6 +13,8 @@ internal sealed partial class GrowableEditorUI
 {
     private int editorTab, selectedStage, previewGeneration, libraryPage;
     private bool closeConfirmation, removeConfirmation, libraryOpen, previewOwnsTexture;
+    private SharedArtInfo? artDeleteConfirmation;
+    private long libraryRevision = -1;
     private string packFilter = "", previewMessage = "", librarySearch = "";
     private StagePreviewSource? previewSourceKey;
     private StagePreviewGeometry? previewGeometryKey;
@@ -131,6 +133,7 @@ internal sealed partial class GrowableEditorUI
         lastEscapeFrame = Time.frameCount;
         if (filePickerOpen) return true;
         if (draggedStage != null) CancelOffsetDrag();
+        else if (artDeleteConfirmation != null) artDeleteConfirmation = null;
         else if (closeConfirmation) closeConfirmation = false;
         else if (libraryOpen) { libraryOpen = false; ClearLibraryThumbnails(); }
         else if (pickerOpen) ClosePicker();
@@ -367,28 +370,43 @@ internal sealed partial class GrowableEditorUI
     protected override void OnFrameworkSessionClosed()
     {
         open = false;
+        artDeleteConfirmation = null;
         base.OnFrameworkSessionClosed();
     }
 
     private void OpenArtLibrary(GrowableStageDefinition stage)
     {
         if (invalidNumbers.Count != 0) { status = "Correct invalid numeric input before changing artwork."; return; }
-        CancelOffsetDrag(); libraryStage = stage; libraryOpen = true; libraryPage = 0; ReloadArtLibrary();
+        CancelOffsetDrag(); libraryStage = stage; libraryOpen = true; libraryPage = 0; artDeleteConfirmation = null; ReloadArtLibrary();
         GUIUtility.ExitGUI();
     }
     private void ReloadArtLibrary()
     {
+        libraryRevision = SharedArtApi.Revision;
         ClearLibraryThumbnails(); libraryEntries.Clear(); filteredLibraryEntries = null;
         try { libraryEntries.AddRange(SharedArtApi.GetEntries()); }
         catch (Exception error) { status = "Cannot read shared art: " + error.Message; }
+        if (artDeleteConfirmation != null && !libraryEntries.Any(e => e.Id == artDeleteConfirmation.Id)) artDeleteConfirmation = null;
     }
     private void DrawArtLibrary()
     {
+        if (Event.current.type == EventType.Layout && libraryRevision != SharedArtApi.Revision) ReloadArtLibrary();
         GUILayout.BeginVertical(GUI.skin.box);
         GUILayout.BeginHorizontal(); GUILayout.Label("Shared asset library", editorHeading!);
-        if (DrawActionButton("Back to editor", 210)) { libraryOpen = false; ClearLibraryThumbnails(); GUIUtility.ExitGUI(); }
+        if (DrawActionButton("Back to editor", 210)) { libraryOpen = false; artDeleteConfirmation = null; ClearLibraryThumbnails(); GUIUtility.ExitGUI(); }
         GUILayout.EndHorizontal();
         GUILayout.Label("BepInEx/shared/ArtLibrary · same library as Item Loader · choose one view for this stage", editorMuted!);
+        if (artDeleteConfirmation != null)
+        {
+            GUILayout.Label("Delete \"" + artDeleteConfirmation.OriginalName + "\" from the shared library?", editorHeading!);
+            GUILayout.Label("This removes the entire asset, including every view, from all mods' shared library. " +
+                "Pack copies and images used by other entries stay intact. Direct library consumers may lose access. " +
+                "A recovery copy is kept in ArtLibrary/trash.");
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button("Confirm delete")) { DeleteLibraryEntry(artDeleteConfirmation.Id); GUIUtility.ExitGUI(); }
+            if (GUILayout.Button("Cancel")) { artDeleteConfirmation = null; GUIUtility.ExitGUI(); }
+            GUILayout.EndHorizontal(); GUILayout.EndVertical(); return;
+        }
         string searchText = GUILayout.TextField(librarySearch);
         if (searchText != librarySearch) { librarySearch = searchText; libraryPage = 0; ClearLibraryThumbnails(); }
         if (DrawActionButton("Refresh library", 230)) ReloadArtLibrary();
@@ -442,7 +460,23 @@ internal sealed partial class GrowableEditorUI
         catch (Exception error) { failedThumbnails.Add(key); GUI.Label(rect, error.Message); }
         GUI.enabled = !failedThumbnails.Contains(key) && libraryStage != null;
         if (GUILayout.Button("Use this view for stage")) { UseLibraryEntry(entry, view); GUIUtility.ExitGUI(); }
-        GUI.enabled = true; GUILayout.EndVertical();
+        GUI.enabled = true;
+        if (GUILayout.Button("Delete from library")) { artDeleteConfirmation = entry; GUIUtility.ExitGUI(); }
+        GUILayout.EndVertical();
+    }
+    private void DeleteLibraryEntry(string id)
+    {
+        artDeleteConfirmation = null;
+        try
+        {
+            var result = SharedArtApi.Delete(id);
+            libraryViews.Remove(id); ReloadArtLibrary();
+            status = result.Deleted
+                ? $"Art removed; {result.DeletedImageCount} unused image(s) removed, {result.SharedImageCount} shared image(s) retained. " +
+                  "Recovery copy: " + result.RecoveryDirectory
+                : "This art was already removed from the library.";
+        }
+        catch (Exception error) { ReloadArtLibrary(); status = "Cannot delete shared art: " + error.Message; }
     }
     private void UseLibraryEntry(SharedArtInfo entry, int view)
     {
@@ -482,6 +516,7 @@ internal sealed partial class GrowableEditorUI
 
     protected override void OnDisable()
     {
+        artDeleteConfirmation = null;
         open = false; filePickerOpen = false; libraryOpen = false; libraryStage = null;
         ClosePicker();
         CancelOffsetDrag(); previewGeneration++; renderingGlbPreview = false;

@@ -16,13 +16,13 @@ namespace SilverpineMods.CustomGrowables;
     "3.0.0")]
 [BepInDependency(
     Silverpine.ModdingTools.Plugin.PluginGuid,
-    "1.13.0")]
+    "1.13.1")]
 public sealed class Plugin : BaseUnityPlugin
 {
     public const string PluginGuid =
         "renegadex.silverpine.customgrowables";
     public const string PluginName = "Custom Growables";
-    public const string PluginVersion = "1.8.3";
+    public const string PluginVersion = "1.8.4";
 
     internal static ManualLogSource Log { get; private set; } = null!;
 

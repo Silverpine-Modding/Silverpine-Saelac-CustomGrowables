@@ -30,10 +30,27 @@ Custom Growables supports:
 - Save-safe assembly-qualified serialization for the add-on's custom seed
   component.
 
+## Shared-library deletion (1.8.4)
+
+Shared-art cards now offer **Delete from library**, with confirmation and Escape
+to cancel. Deletion removes the **whole asset**, not just the currently selected
+view, from every mod's shared catalog. Pack copies, source GLBs and image files
+used by other entries are retained. Existing growable stage artwork copied into
+packs is unchanged; direct shared-library consumers may lose access.
+
+The framework keeps a recovery copy under `BepInEx/shared/ArtLibrary/trash` and
+refuses deletion when records are unsafe or unreadable. Recovery is described in
+the Modding Tools README. Copies are not automatically purged, so removing an
+entry is not a disk-space cleanup operation. Explicit republishing can add it again.
+
+Item Loader, Enemy Loader and Growables all use the same deletion API. Open
+browsers refresh entries and thumbnails after any of them changes the library,
+using a cheap in-memory revision token rather than repeated disk scans.
+
 ## Requirements
 
 - BepInEx for Silverpine 1.7.3
-- Silverpine Modding Tools 1.13.0 or newer
+- Silverpine Modding Tools 1.13.1 or newer
 - Custom Item Loader 3.0.0 or newer (including its add-on GLB-cache API)
 
 Install `CustomGrowables.dll` in:
