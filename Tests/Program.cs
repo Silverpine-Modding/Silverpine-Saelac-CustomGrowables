@@ -197,6 +197,7 @@ try
     RuntimeChecks.Run(Check, file);
     LightingQualityChecks.Run(Check, file);
     QualityParticleChecks.Run(Check, file);
+    GrowableApiChecks.Run(Check, file);
     foreach (string invalid in new[] { "", "-", "abc", "NaN", "Infinity", "1e100" })
         Check(!EditorValidation.TryFloat(invalid, out _), "numeric editor rejects incomplete/non-finite text: " + invalid);
     Check(EditorValidation.TryFloat("0.00001", out float tiny) && tiny == .00001f &&

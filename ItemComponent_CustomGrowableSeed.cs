@@ -115,8 +115,14 @@ public sealed class ItemComponent_CustomGrowableSeed : ItemComponent, IQualityIt
                         player.transform.GetVector2IntPosition() != position || WorldInfoManager.Instance == null) return;
                     if ((definition.playerPropertyOnly && !WorldInfoManager.Instance.IsOnPlayerOwnedPlot(position)) ||
                         (!definition.allowRoofed && TileTags.HasTileTag(position, TileTag.Roofed))) return;
-                    GrowableRegistry.Plant(definition, position, GrowableQuality.FromItem(seed));
-                    seed.RemoveItemFromInventory();
+                    GameObject planted = GrowableRegistry.Plant(definition, position, GrowableQuality.FromItem(seed));
+                    try { seed.RemoveItemFromInventory(); }
+                    finally
+                    {
+                        // Inventory callbacks can throw after removing the seed.
+                        // Report the actual completed planting, not the exception.
+                        if (!source.ContainsItem(seed)) GrowableApi.NotifyPlanted(planted, player.gameObject, seed);
+                    }
                 }
                 catch (Exception error) { Plugin.Log.LogError("Planting failed: " + error); }
                 finally { Finish(); }

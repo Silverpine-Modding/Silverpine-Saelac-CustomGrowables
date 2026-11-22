@@ -22,6 +22,11 @@ namespace UnityEngine
             return component;
         }
         public T GetComponent<T>() where T : new() => Components.TryGetValue(typeof(T), out var component) ? (T)component : AddComponent<T>();
+        public bool TryGetComponent<T>(out T component)
+        {
+            if (Components.TryGetValue(typeof(T), out var found) && found is T value) { component = value; return true; }
+            component = default!; return false;
+        }
     }
     public struct Vector3
     {

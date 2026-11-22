@@ -10,6 +10,15 @@ namespace UnityEngine
     {
         public static bool FailParticleClone;
         public static void Destroy(object value) { if (value is GameObject gameObject) gameObject.Destroyed = true; }
+        public static T Instantiate<T>(T original, Vector3 position, Quaternion rotation) where T : GameObject
+        {
+            var clone = new GameObject(original.name + "(Clone)"); clone.transform.position = position;
+            if (original.TryGetComponent<Crop>(out var crop)) clone.AddComponent<Crop>().SetMature(crop.MatureValue);
+            if (original.TryGetComponent<InGameTimeCrop>(out _)) clone.AddComponent<InGameTimeCrop>();
+            if (original.TryGetComponent<ResourceNode>(out var node))
+            { var copy = clone.AddComponent<ResourceNode>(); copy.resourceNodeType = node.resourceNodeType; copy.quality = node.quality; }
+            return (T)clone;
+        }
         public static GameObject Instantiate(GameObject original, Transform parent, bool worldPositionStays)
         {
             if (FailParticleClone) throw new InvalidOperationException("Simulated missing particle asset");
@@ -61,6 +70,7 @@ namespace UnityEngine
         public override bool Equals(object? o) => o is Vector2Int v && this == v;
         public override int GetHashCode() => HashCode.Combine(x, y);
     }
+    public struct Quaternion { }
     public class SpriteRenderer { public Sprite? sprite; public int sortingOrder; }
     public static class Time { public static float fixedUnscaledDeltaTime = .02f; }
     public static class Random
@@ -122,12 +132,20 @@ public static class GameExtensions
 }
 public class Item
 {
+    public string name = "Test item";
     public readonly List<ItemComponent> Components = new();
     public List<T> GetItemComponents<T>() => Components.OfType<T>().ToList();
     public bool TryGetItemComponent<T>(out T result) { result = Components.OfType<T>().FirstOrDefault()!; return result != null; }
     public Item SetQuality(Quality quality) { foreach (var component in Components.OfType<IQualityItemComponent>()) component.Quality = quality; return this; }
     public Inventory inventory = null!;
     public void RemoveItemFromInventory() => inventory.Items.Remove(this);
+    public Item DeepClone()
+    {
+        var clone = new Item { name = name };
+        foreach (var component in Components.OfType<IQualityItemComponent>())
+            clone.Components.Add(new QualityTestComponent { Quality = component.Quality });
+        return clone;
+    }
 }
 public class ItemComponent
 {
@@ -250,7 +268,11 @@ namespace SilverpineMods.CustomGrowables
         internal static bool FailPlant;
         internal static Quality LastPlantedQuality;
         internal static GameObject Plant(GrowableDefinition definition, Vector2Int position, Quality quality = Quality.Normal)
-        { if (FailPlant) throw new Exception("Plant allocation failed"); Planted++; LastPlantedQuality = quality; return new(); }
+        {
+            if (FailPlant) throw new Exception("Plant allocation failed"); Planted++; LastPlantedQuality = quality;
+            var instance = new GameObject(); var plant = instance.AddComponent<CustomGrowable>();
+            plant.Configure(definition.QualifiedId); plant.SetSeedQuality(quality); return instance;
+        }
         internal static bool TryGet(string id, out GrowableDefinition definition)
         { Lookups++; return Definitions.TryGetValue(id, out definition!); }
         internal static string? FailItem;

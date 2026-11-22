@@ -27,8 +27,21 @@ Custom Growables supports:
   the tile layer.
 - A dedicated in-game Growables Editor backed by CIL's item and pack APIs.
 - Native-style player and NPC harvesting interactions.
+- A public skills-mod API for custom and base-game planting, growth, and harvests.
 - Save-safe assembly-qualified serialization for the add-on's custom seed
   component.
+
+## Skills-mod hooks (1.9.0)
+
+`GrowableApi` provides completed planting and harvesting events, growth-stage
+notifications, plant snapshots, and per-output yield/quality modifiers. Native
+crops, timed saplings, and herb gathering use the same hooks as custom plants.
+Cancelled interactions, save restoration, ore mining, and unrelated inventory
+transactions do not award plant-activity events. NPC harvests carry their own
+actor attribution. No pack edits or save migration are required.
+
+See [the API guide](API.md) for exact coverage, event semantics, safe lifecycle
+registration, and a compile-checked external skills-mod example.
 
 ## Shared-library deletion (1.8.4)
 

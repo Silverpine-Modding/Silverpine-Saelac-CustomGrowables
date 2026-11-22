@@ -36,6 +36,18 @@ public sealed class CustomGrowable :
 
     internal void SetSeedQuality(Quality quality) => seedQuality = GrowableQuality.Normalize(quality);
 
+    internal bool TryGetApiInfo(out GrowableInfo info)
+    {
+        info = null!;
+        if (!TryGetDefinition(out var definition) || gameObject == definition.Template) return false;
+        info = ApiInfo(definition, stageIndex);
+        return true;
+    }
+
+    private GrowableInfo ApiInfo(GrowableDefinition definition, int stage) =>
+        new(gameObject, definition.QualifiedId, definition.DisplayName, GrowableKind.Custom,
+            seedQuality, stage, definition.stages!.Count, definition.IsHarvestReady(stage), definition.perennial);
+
     internal void Configure(string qualifiedId)
     {
         growableId = qualifiedId;
@@ -146,14 +158,19 @@ public sealed class CustomGrowable :
             return false;
         double elapsed = pendingOfflineSeconds;
         pendingOfflineSeconds = 0; pendingOfflineTimestamp = null;
-        if (CanGrowNow(definition)) Advance(definition, elapsed);
+        if (CanGrowNow(definition)) Advance(definition, elapsed, GrowableGrowthReason.OfflineCatchUp);
         return true;
     }
 
-    private void Advance(GrowableDefinition definition, double amount)
+    private void Advance(GrowableDefinition definition, double amount, GrowableGrowthReason reason = GrowableGrowthReason.Growth)
     {
+        int previousStage = stageIndex;
         if (GrowthProgress.Advance(definition, ref stageIndex, ref stageProgress, ref hasMatured, amount))
+        {
             ApplyStage();
+            if (GrowableApi.HasGrowthListeners && gameObject != definition.Template)
+                GrowableApi.NotifyGrowth(ApiInfo(definition, previousStage), ApiInfo(definition, stageIndex), reason);
+        }
     }
 
     private void ApplyStage()
@@ -335,6 +352,8 @@ public sealed class CustomGrowable :
         harvesting = true;
         try
         {
+            GrowableInfo? harvestInfo = null;
+            if (GrowableApi.HasHarvestListeners || GrowableApi.HasGrowthListeners) TryGetApiInfo(out harvestInfo!);
             // Resolve every output first. A missing/broken item must not consume the
             // crop or grant earlier outputs again on the next attempt.
             var results = new List<Item>();
@@ -349,7 +368,8 @@ public sealed class CustomGrowable :
                         if (!GrowableRegistry.TryCreateItem(output.item!, out Item item))
                             throw new InvalidOperationException("Cannot create harvest item '" + output.item + "'.");
                         GrowableQuality.ApplyHarvest(item, seedQuality, definition);
-                        results.Add(item);
+                        if (harvestInfo != null) results.AddRange(GrowableApi.PrepareOutput(harvestInfo, inventory, item));
+                        else results.Add(item);
                     }
                 }
             }
@@ -370,6 +390,7 @@ public sealed class CustomGrowable :
             else PrepareForRemoval();
 
             var overflow = new List<Item>();
+            var delivered = new List<Item>();
             foreach (Item item in results)
             {
                 bool added;
@@ -381,20 +402,38 @@ public sealed class CustomGrowable :
                     Plugin.Log.LogWarning("Harvest inventory callback failed: " + error.Message);
                 }
                 if (!added) overflow.Add(item);
-                else if (inventory.owner != null)
+                else
+                {
+                    delivered.Add(item);
+                    if (inventory.owner != null)
                     try { AnimationHelper.Instance.SpawnItemFloatingText(item, inventory.owner.transform); }
                     catch (Exception error) { Plugin.Log.LogWarning("Harvest text failed: " + error.Message); }
+                }
             }
+            bool dropped = false;
             try
             {
                 if (overflow.Count > 0) LootDropper.DropLoot(overflow, position);
+                dropped = true;
             }
             finally
             {
-                try { AnimationHelper.Instance.SpawnFadeDummy(gameObject); }
-                catch (Exception error) { Plugin.Log.LogWarning("Harvest visual failed: " + error.Message); }
-                if (beingRemoved) UnityEngine.Object.Destroy(gameObject);
-                else ApplyStage();
+                try
+                {
+                    try { AnimationHelper.Instance.SpawnFadeDummy(gameObject); }
+                    catch (Exception error) { Plugin.Log.LogWarning("Harvest visual failed: " + error.Message); }
+                    if (beingRemoved) UnityEngine.Object.Destroy(gameObject);
+                    else ApplyStage();
+                }
+                finally
+                {
+                    if (harvestInfo != null)
+                    {
+                        if (!beingRemoved && TryGetApiInfo(out var after))
+                            GrowableApi.NotifyGrowth(harvestInfo, after, GrowableGrowthReason.Regrowth);
+                        GrowableApi.NotifyHarvested(harvestInfo, inventory, delivered, dropped ? overflow : new List<Item>());
+                    }
+                }
             }
         }
         finally { harvesting = false; }

@@ -5,7 +5,11 @@
     <NoWarn>CS0649</NoWarn>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Remove="ApiConsumer\**\*.cs" />
     <Reference Include="Mono.Cecil"><HintPath>..\..\..\BepInEx\core\Mono.Cecil.dll</HintPath></Reference>
+    <Reference Include="0Harmony"><HintPath>..\..\..\BepInEx\core\0Harmony.dll</HintPath></Reference>
+    <Reference Include="MonoMod.Utils"><HintPath>..\..\..\BepInEx\core\MonoMod.Utils.dll</HintPath></Reference>
+    <Reference Include="MonoMod.RuntimeDetour"><HintPath>..\..\..\BepInEx\core\MonoMod.RuntimeDetour.dll</HintPath></Reference>
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
     <Compile Include="..\StageArtIdentity.cs" Link="Production\StageArtIdentity.cs" />
     <Compile Include="..\Definitions.cs" Link="Production\Definitions.cs" />
@@ -13,6 +17,9 @@
     <Compile Include="..\StageLight.cs" Link="Production\StageLight.cs" />
     <Compile Include="..\QualityParticles.cs" Link="Production\QualityParticles.cs" />
     <Compile Include="..\GrowableQuality.cs" Link="Production\GrowableQuality.cs" />
+    <Compile Include="..\GrowableApi.cs" Link="Production\GrowableApi.cs" />
+    <Compile Include="..\NativeGrowableHooks.cs" Link="Production\NativeGrowableHooks.cs" />
+    <Compile Include="..\NativeGrowablePatches.cs" Link="Production\NativeGrowablePatches.cs" />
     <Compile Include="..\GrowthSeasons.cs" Link="Production\GrowthSeasons.cs" />
     <Compile Include="..\GrowthProgress.cs" Link="Production\GrowthProgress.cs" />
     <Compile Include="..\StagePreviewState.cs" Link="Production\StagePreviewState.cs" />

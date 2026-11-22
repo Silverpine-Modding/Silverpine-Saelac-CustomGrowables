@@ -6,6 +6,34 @@ components, timing, seasons, preview snapshots, editor validation,
 seed compatibility, cache migration, and Modding Tools shared-art code.
 Small game/path stubs allow these tests to run outside Unity.
 
+Version 1.9.0 adds skills API checks for custom/native snapshots, completed seed
+planting, cancellation, growth and offline catch-up, regrowth, native sapling
+replacement, NPC/inventory-owner attribution, yield/quality modifiers, bounded
+copy counts, unsupported quality, subscriber failures, reentrancy, duplicate
+completion, inventory callback failures, overflow, and save-load suppression.
+Native ore paths remain untouched. The actual installed game assembly is
+inspected for the exact private fields and delayed planting/harvest/maturity
+call sites used by the patches. Production transpiler rewrites are tested on
+explicit instruction shapes; the bundled Unity/Mono Harmony cannot execute
+live detours under this .NET 9 test host. These are not Unity play-mode tests.
+
+`ApiConsumer/ApiConsumer.csproj` separately compiles a sample skills integration
+against the built plugin and actual game DLLs, rather than linked/internal
+source. Run it after building the release:
+
+```powershell
+dotnet build Tests/ApiConsumer/ApiConsumer.csproj -c Release --nologo
+```
+
+In-game verification still needs a real skills subscriber: plant/cancel custom
+and native seeds, mature a crop and sapling, harvest a natural quality herb and
+custom perennial, test a full inventory and NPC harvest, and save/reload. Check
+exactly one successful-action XP award, correct output counts/quality, no
+load/cancel XP, and no ore/tree-felling events. Subscribe from a session-lived
+integration, not a component that unsubscribes when the bootstrap host dies.
+The 1.9.0 suite passes 394 checks including the compiled-plugin and installed-game
+binary checks; the external consumer also builds with no warnings or errors.
+
 Version 1.8.3 adds binary guards for content-measured picker rows, wrapping,
 left alignment, literal labels, absence of forced height constraints, and
 scroll reset when filtering. The old picker fails the routing guard. These

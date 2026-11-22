@@ -35,6 +35,7 @@ internal static class BinaryChecks
                 Calls(applyStage, "RoundToInt") && Calls(applyStage, "set_sortingOrder"),
             "stage updates sort directly without calling YSorter before its Awake");
         using var gameAssembly = AssemblyDefinition.ReadAssembly(Path.Combine(game, "Silverpine_Data", "Managed", "Assembly-CSharp.dll"));
+        NativeApiBinaryChecks.Run(check, gameAssembly, assembly);
         var nativeSorter = gameAssembly.MainModule.GetType("YSorter");
         var nativeSort = nativeSorter.Methods.Single(m => m.Name == "SetSortingOrder");
         check(nativeSorter.Methods.Single(m => m.Name == "Awake").Body.Instructions.Any(i =>
